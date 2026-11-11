@@ -1,0 +1,18 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "top": 3,
+  "offset": 2,
+  "levels": 16,
+  "n": 255,
+  "k": 247,
+  "layout": "column",
+  "backend": "linux",
+  "device": 0,
+  "monitor": 0,
+  "pixel_format": "BGR3",
+  "orientation": "normal",
+  "timeout": 15,
+  "fps": 10,
+  "calibration": "historical; requires hardware validation"
+}

@@ -1,0 +1,6 @@
+from typing import Protocol
+import numpy as np
+class Display(Protocol):
+    def show(self, image: np.ndarray) -> None: ...
+class Capture(Protocol):
+    def read(self) -> np.ndarray: ...

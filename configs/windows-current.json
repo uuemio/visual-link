@@ -1,0 +1,19 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "top": 3,
+  "offset": 2,
+  "levels": 16,
+  "n": 255,
+  "k": 247,
+  "layout": "column",
+  "backend": "windows",
+  "device": 0,
+  "monitor": 1,
+  "pixel_format": "BGR3",
+  "orientation": "normal",
+  "timeout": 30,
+  "fps": 10,
+  "calibration": "Existing DISPLAY2/device0 wiring; user set output to 1920x1080; preserve mode and verify signal on next run",
+  "temporary_1080p": false
+}
