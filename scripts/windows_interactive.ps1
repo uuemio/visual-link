@@ -10,7 +10,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 if (-not (-not [double]::IsNaN($Seconds) -and -not [double]::IsInfinity($Seconds)) -or $Seconds -le 0) { throw 'Seconds must be finite and positive' }
-$output = [System.IO.Path]::GetFullPath((Join-Path $root $OutputDirectory))
+$outputPath = $OutputDirectory
+if (-not [System.IO.Path]::IsPathRooted($outputPath)) { $outputPath = Join-Path $root $outputPath }
+$output = [System.IO.Path]::GetFullPath($outputPath)
 if (Test-Path $output) { throw 'Output already exists' }
 $parent = Split-Path -Parent $output
 New-Item -ItemType Directory -Path $parent -Force | Out-Null

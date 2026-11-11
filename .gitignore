@@ -6,3 +6,5 @@ runs/
 *.bin
 *.part
 .local/
+
+/bear.jpg

@@ -185,6 +185,23 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
     last_hello = 0.0
     feedback_index = 0
     log = (directory/'control.jsonl').open('x', encoding='utf-8')
+    progress_at = 0.0
+
+    def report_progress(force=False):
+        nonlocal progress_at
+        now = time.monotonic()
+        if not force and now-progress_at < 0.5:
+            return
+        progress_at = now
+        value = dict(state=session.state.value, phase=getattr(session, 'phase', None),
+                     connection_ready=getattr(session, 'ready', False),
+                     send_count=0 if payload is None else payload.count,
+                     received_count=len(receiver.frames),
+                     receive_count=None if receiver.first is None else receiver.first['count'],
+                     receive_complete=received is not None, transport=transport.stats())
+        temporary = directory/'progress.tmp'
+        save_json(temporary, value)
+        temporary.replace(directory/'progress.json')
 
     def prepare_frame(index):
         if index in tx_images:
@@ -305,6 +322,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
         if transport.sender is not None:
             for acknowledged in transport.sender.acknowledged.intersection(tx_images):
                 tx_images.pop(acknowledged).cancel()
+        report_progress()
         if not present or time.monotonic()-last < hold_seconds:
             return None
         ready = negotiate and session.ready
@@ -372,6 +390,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
 
     failure = None
     try:
+        report_progress(force=True)
         if calibrate:
             from .discovery import display_info
             observed_display = display_info(config)
@@ -426,6 +445,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                     worker.join()
             messages.close()
             log.close()
+            report_progress(force=True)
             save_json(directory/'result.json', dict(status='failed' if failure else 'complete',
                       error=failure, state=session.state.value, local_id=session.local_id,
                       peer_id=session.peer_id, session_id=session.session_id,
@@ -434,7 +454,9 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                       configurations=getattr(session, 'proposal', None), received=received,
                       connection_ready=getattr(session, 'ready', False),
                       send_ready=getattr(session, 'can_send', False),
-                      receive_complete=received is not None, transport=transport.stats(),
+                      receive_complete=received is not None,
+                      receive_count=None if receiver.first is None else receiver.first['count'],
+                      transport=transport.stats(),
                       tx_presentations=tx_index,
                       calibrated=getattr(session, 'calibrated', False),
                       local_calibration=getattr(session, 'local_calibration', None),
