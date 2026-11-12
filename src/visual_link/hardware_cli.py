@@ -4,6 +4,7 @@ import math
 from . import calibration
 from .backends.image_sequence import write
 from .core.mapping import read_image
+from .core.image import image_parameters
 from .hardware import capture, receive_one, save_json
 
 MODES = ('pattern', 'compare', 'display', 'capture', 'rx-one', 'display-stream', 'rx-stream', 'bootstrap', 'connect')
@@ -40,11 +41,11 @@ def run(args, config):
                             negotiate=args.mode == 'connect', input_file=args.input)
         elif args.mode == 'pattern':
             seed = 20261109 if args.seed is None else args.seed
-            write(args.output/'pattern.png', calibration.pattern(seed))
+            write(args.output/'pattern.png', calibration.pattern(seed, image_parameters(config, 'tx')))
             report = dict(status='generated', seed=seed, generator='NumPy 2.2.6 default_rng.bytes',
                           image='pattern.png')
         elif args.mode == 'compare':
-            report = calibration.compare(read_image(args.reference), read_image(args.input), config['orientation'])
+            report = calibration.compare(read_image(args.reference), read_image(args.input), config['orientation'], image_parameters(config, 'rx'))
         elif args.mode == 'rx-stream':
             from .streaming import receive_stream
             report = receive_stream(config, args.output, args.seconds, args.queue_size)

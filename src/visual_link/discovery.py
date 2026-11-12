@@ -4,17 +4,20 @@ import time
 from .core.protocol import encode_frame, decode
 from .core.control import decode as decode_control
 from .calibration import receive_wire
+from .core.image import DEFAULT_IMAGE, image_parameters
 
 
 def display_info(config):
+    parameters = image_parameters(config, 'tx')
+    width, height = parameters.width, parameters.height
     if config['backend'] == 'windows':
         from .backends.windows import monitors
         from .backends.windows_signal import signals
         rows = monitors()
         monitor = rows[config['monitor']]
         signal = next(s for s in signals() if s['device'] == monitor['device'])
-        if signal['active'] != [1920,1080] or signal['scaling'] != 1:
-            raise ValueError('selected display signal must be native 1080p identity')
+        if signal['active'] != [width,height] or signal['scaling'] != 1:
+            raise ValueError('selected display signal must be native configured identity')
         return dict(selected=monitor, outputs=rows, signal=signal)
     if config['backend'] != 'linux':
         raise ValueError('device discovery requires a hardware backend')
@@ -30,15 +33,15 @@ def display_info(config):
         rows.append(dict(index=i, width=rect.width, height=rect.height,
                          scale=monitor.get_scale_factor(), refresh_millihz=monitor.get_refresh_rate()))
     selected=rows[config['monitor']]
-    if (selected['width'],selected['height'],selected['scale']) != (1920,1080,1):
-        raise ValueError('selected display must be native 1080p scale1')
+    if (selected['width'],selected['height'],selected['scale']) != (width,height,1):
+        raise ValueError('selected display must be native configured scale1')
     return dict(selected=selected,outputs=rows)
 
 
-def codec_timings():
+def codec_timings(parameters=DEFAULT_IMAGE):
     """Time encoding and the full connect receive path on local BGR pixels."""
     started=time.monotonic()
-    image, _ = encode_frame(b'visual-link performance probe',seed=0)
+    image, _ = encode_frame(b'visual-link performance probe',seed=0,parameters=parameters)
     encoded=time.monotonic()
     import numpy as np
     captured=np.repeat(image[:,:,None],3,axis=2)
@@ -48,8 +51,8 @@ def codec_timings():
         pass
     else:
         raise ValueError('local business probe decoded as control')
-    frame=decode(receive_wire(captured,dict(orientation='normal',roi=[3,1080,2,1920],
-                                          thresholds=[8.5+17*i for i in range(15)])))
+    frame=decode(receive_wire(captured,dict(orientation='normal',roi=list(parameters.tx_roi),
+                                          thresholds=[8.5+17*i for i in range(15)]), parameters), parameters)
     ended=time.monotonic()
     if frame.data != b'visual-link performance probe':
         raise ValueError('local codec probe failed')

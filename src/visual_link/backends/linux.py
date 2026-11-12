@@ -3,14 +3,17 @@ import sys
 import time
 
 import numpy as np
+from ..core.image import image_parameters
 
 
 def display_one(config, image, seconds, ready=None, advance=None):
     """Hold a single image at 1:1 pixels, restore the window on exit."""
+    parameters = image_parameters(config, 'tx')
+    width, height = parameters.width, parameters.height
     if not sys.platform.startswith('linux'):
         raise ValueError('GTK display requires Linux')
-    if image.dtype != np.uint8 or image.shape not in ((1080, 1920), (1080, 1920, 3)):
-        raise ValueError('display requires native 1920x1080 uint8 gray or BGR')
+    if image.dtype != np.uint8 or image.shape not in (parameters.shape, (*parameters.shape, 3)):
+        raise ValueError(f'display requires native {width}x{height} uint8 gray or BGR')
     try:
         import gi
         gi.require_version('Gtk', '3.0')
@@ -26,15 +29,15 @@ def display_one(config, image, seconds, ready=None, advance=None):
         raise ValueError('monitor index out of range')
     monitor = display.get_monitor(index)
     rect = monitor.get_geometry()
-    if (rect.width, rect.height, monitor.get_scale_factor()) != (1920, 1080, 1):
-        raise ValueError('monitor must be 1920x1080 at scale 1; scaling is forbidden')
+    if (rect.width, rect.height, monitor.get_scale_factor()) != (width, height, 1):
+        raise ValueError(f'monitor must be {width}x{height} at scale 1; scaling is forbidden')
     def make_pixbuf(image):
-        if image.dtype != np.uint8 or image.shape not in ((1080, 1920), (1080, 1920, 3)):
-            raise ValueError('display requires native 1920x1080 pixels')
+        if image.dtype != np.uint8 or image.shape not in (parameters.shape, (*parameters.shape, 3)):
+            raise ValueError(f'display requires native {width}x{height} pixels')
         rgb = np.repeat(image[:, :, None], 3, axis=2) if image.ndim == 2 else image[:, :, ::-1]
         pixels = GLib.Bytes.new(np.ascontiguousarray(rgb).tobytes())
         return GdkPixbuf.Pixbuf.new_from_bytes(pixels, GdkPixbuf.Colorspace.RGB,
-                                           False, 8, 1920, 1080, 1920*3)
+                                           False, 8, width, height, width*3)
     pixbuf = make_pixbuf(image)
     window = Gtk.Window()
     picture = Gtk.Image.new_from_pixbuf(pixbuf)
@@ -60,7 +63,7 @@ def display_one(config, image, seconds, ready=None, advance=None):
 
     def check():
         size = window.get_allocation()
-        native = (size.width, size.height, window.get_scale_factor()) == (1920, 1080, 1)
+        native = (size.width, size.height, window.get_scale_factor()) == (width, height, 1)
         full = window.get_window().get_state() & Gdk.WindowState.FULLSCREEN
         if state['start'] is None:
             if native and full:
@@ -103,5 +106,5 @@ def display_one(config, image, seconds, ready=None, advance=None):
         raise ValueError(state['error'])
     if state['cancelled'] or state['start'] is None:
         raise ValueError('display cancelled')
-    return dict(monitor=index, width=1920, height=1080, scale=1,
+    return dict(monitor=index, width=width, height=height, scale=1,
                 held_seconds=time.monotonic()-state['start'], physical_output_verified=False)

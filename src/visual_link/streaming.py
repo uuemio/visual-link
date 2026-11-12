@@ -13,6 +13,7 @@ from .backends.image_sequence import write
 from .core.mapping import image_to_wire
 from .core.protocol import decode, digest
 from .core.reassembly import Reassembler
+from .core.image import image_parameters
 from .hardware import save_json
 
 
@@ -47,6 +48,7 @@ def _capture(config, directory, images, stop, done, counts, heartbeat):
 
 def _decode(config, directory, images, done, heartbeat):
     directory = Path(directory)
+    parameters = image_parameters(config, 'rx')
     receiver = Reassembler()
     rejected = accepted = corrected = 0
     complete = False
@@ -66,7 +68,7 @@ def _decode(config, directory, images, done, heartbeat):
                              queue_age_seconds=(time.monotonic_ns()-captured_ns)/1e9)
                 try:
                     oriented = image[::-1] if config['orientation'] == 'flip_vertical' else image
-                    frame = decode(image_to_wire(oriented, captured=True, layout='column'))
+                    frame = decode(image_to_wire(oriented, captured=True, layout='column', parameters=parameters), parameters=parameters)
                     receiver.add(frame)
                     accepted += 1
                     corrected += frame.corrected_symbols

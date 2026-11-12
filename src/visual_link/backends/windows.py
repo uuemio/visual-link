@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from .camera import capture_one
+from ..core.image import image_parameters
 
 
 def _api():
@@ -74,6 +75,8 @@ def monitors():
 @contextmanager
 def desktop_mode(config):
     """Optionally switch the selected output to 1080p, restoring its original mode."""
+    parameters = image_parameters(config, 'tx')
+    width, height = parameters.width, parameters.height
     ct, _, api, _, mode_type = _api()
     rows = monitors()
     if config['monitor'] >= len(rows):
@@ -88,11 +91,11 @@ def desktop_mode(config):
         raise ValueError('cannot read original display mode')
     changed = False
     try:
-        if (monitor['width'], monitor['height']) != (1920, 1080):
-            if not config.get('temporary_1080p', False):
-                raise ValueError('monitor must be 1920x1080; temporary_1080p requires explicit configuration')
+        if (monitor['width'], monitor['height']) != (width, height):
+            if parameters.height != 1080 or not config.get('temporary_1080p', False):
+                raise ValueError(f'monitor must already be {width}x{height}; temporary_1080p only switches 1080p')
             requested = mode_type.from_buffer_copy(original)
-            requested.dmPelsWidth, requested.dmPelsHeight = 1920, 1080
+            requested.dmPelsWidth, requested.dmPelsHeight = width, height
             requested.dmDisplayFrequency = 60
             requested.dmFields = 0x80000 | 0x100000 | 0x400000  # DM_PELSWIDTH | DM_PELSHEIGHT
             if api.ChangeDisplaySettingsExW(device, ct.byref(requested), None, 2, None) != 0:
@@ -101,8 +104,8 @@ def desktop_mode(config):
             if api.ChangeDisplaySettingsExW(device, ct.byref(requested), None, 4, None) != 0:
                 raise ValueError('temporary 1920x1080 mode switch failed')
         current = next(row for row in monitors() if row['device'] == device)
-        if (current['width'], current['height']) != (1920, 1080):
-            raise ValueError('native 1920x1080 display mode not confirmed')
+        if (current['width'], current['height']) != (width, height):
+            raise ValueError(f'native {width}x{height} display mode not confirmed')
         yield dict(**current, mode_changed=changed, original_width=original.dmPelsWidth,
                    original_height=original.dmPelsHeight, original_refresh=original.dmDisplayFrequency)
     finally:
@@ -112,12 +115,14 @@ def desktop_mode(config):
 
 def display_one(config, image, seconds, ready=None, advance=None):
     """Hold a borderless native-size PNG on the selected interactive monitor."""
-    if image.dtype != np.uint8 or image.shape not in ((1080, 1920), (1080, 1920, 3)):
-        raise ValueError('display requires native 1920x1080 uint8 gray or BGR')
+    parameters = image_parameters(config, 'tx')
+    width, height = parameters.width, parameters.height
+    if image.dtype != np.uint8 or image.shape not in (parameters.shape, (*parameters.shape, 3)):
+        raise ValueError(f'display requires native {width}x{height} uint8 gray or BGR')
     if not np.isfinite(seconds) or seconds <= 0:
         raise ValueError('display duration must be positive and finite')
     from .windows_signal import identity_signal
-    with desktop_mode(config) as monitor, identity_signal(monitor['device'], config.get('temporary_1080p', False)) as timing:
+    with desktop_mode(config) as monitor, identity_signal(monitor['device'], config.get('temporary_1080p', False), parameters=parameters) as timing:
         import base64
         import tkinter as tk
         ok, png = cv2.imencode('.png', image)
@@ -132,7 +137,7 @@ def display_one(config, image, seconds, ready=None, advance=None):
             window.configure(cursor='none', background='black')
             window.tk.call('tk', 'scaling', 1.0)
             # SetWindowPos uses physical desktop coordinates, including negative origins.
-            window.geometry('1920x1080')
+            window.geometry(f'{width}x{height}')
             photo = tk.PhotoImage(data=base64.b64encode(png.tobytes()))
             label = tk.Label(window, image=photo, borderwidth=0, highlightthickness=0, padx=0, pady=0)
             label.pack(fill='both', expand=True)
@@ -143,7 +148,7 @@ def display_one(config, image, seconds, ready=None, advance=None):
             api.GetParent.restype = wt.HWND
             window.update_idletasks()
             hwnd = api.GetParent(window.winfo_id()) or window.winfo_id()
-            if not api.SetWindowPos(hwnd, ct.c_void_p(-1), monitor['x'], monitor['y'], 1920, 1080, 0x40):
+            if not api.SetWindowPos(hwnd, ct.c_void_p(-1), monitor['x'], monitor['y'], width, height, 0x40):
                 raise ct.WinError(ct.get_last_error())
             window.deiconify()
             window.lift()
@@ -159,7 +164,7 @@ def display_one(config, image, seconds, ready=None, advance=None):
 
             def check():
                 geometry = (window.winfo_rootx(), window.winfo_rooty(), window.winfo_width(), window.winfo_height())
-                exact = geometry == (monitor['x'], monitor['y'], 1920, 1080)
+                exact = geometry == (monitor['x'], monitor['y'], width, height)
                 if state['start'] is None:
                     if exact:
                         state['start'] = time.monotonic()
@@ -180,8 +185,8 @@ def display_one(config, image, seconds, ready=None, advance=None):
                     try:
                         next_image = advance()
                         if next_image is not None:
-                            if next_image.dtype != np.uint8 or next_image.shape not in ((1080, 1920), (1080, 1920, 3)):
-                                raise ValueError('display requires native 1920x1080 pixels')
+                            if next_image.dtype != np.uint8 or next_image.shape not in (parameters.shape, (*parameters.shape, 3)):
+                                raise ValueError(f'display requires native {width}x{height} pixels')
                             ok, encoded = cv2.imencode('.png', next_image)
                             if not ok:
                                 raise ValueError('cannot encode display pixels')

@@ -4,6 +4,7 @@ from .config import load
 from .core.payload import random_data
 from .core.protocol import capacity, digest, encode_frame, decode
 from .core.mapping import image_to_wire
+from .core.image import image_parameters
 from .core.reassembly import Reassembler
 from .backends.image_sequence import frames, write
 from .hardware_cli import MODES, run as run_hardware
@@ -23,6 +24,7 @@ def main():
     a=p.parse_args()
     try:
         c=load(a.config)
+        tx,rx=image_parameters(c, 'tx'),image_parameters(c, 'rx')
         if a.mode in MODES:
             print(json.dumps(run_hardware(a,c)))
             return
@@ -38,10 +40,10 @@ def main():
             if a.input is None and (a.seed is None or a.size is None):
                 raise ValueError('TX requires input or seed and size')
             data=a.input.read_bytes() if a.input else random_data(a.seed,a.size)
-            cap=capacity(255,247); count=max(1,(len(data)+cap-1)//cap)
+            cap=capacity(255,247,tx); count=max(1,(len(data)+cap-1)//cap)
             a.output.mkdir(parents=True,exist_ok=False)
             for i in range(count):
-                image,_=encode_frame(data[i*cap:(i+1)*cap],index=i,count=count,total=len(data),file_hash=digest(data),seed=i)
+                image,_=encode_frame(data[i*cap:(i+1)*cap],index=i,count=count,total=len(data),file_hash=digest(data),seed=i,parameters=tx)
                 write(a.output/f'frame_{i:05d}.png',image)
             print(json.dumps(dict(frames=count,bytes=len(data),sha256=digest(data).hex())))
         else:
@@ -52,7 +54,7 @@ def main():
                 if time.monotonic()-start > c['timeout']:
                     raise ValueError('offline processing timeout')
                 if c['orientation']=='flip_vertical': image=image[::-1].copy()
-                r.add(decode(image_to_wire(image,captured=a.captured,layout='column')))
+                r.add(decode(image_to_wire(image,captured=a.captured,layout='column',parameters=rx),parameters=rx))
             data=r.finish()
             a.output.parent.mkdir(parents=True,exist_ok=True)
             fd,tmp=tempfile.mkstemp(dir=a.output.parent)

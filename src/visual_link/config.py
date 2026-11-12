@@ -1,14 +1,17 @@
 import json
 import math
 from pathlib import Path
+from .core.image import image_parameters
 
 BASE = dict(width=1920,height=1080,top=3,offset=2,levels=16,n=255,k=247,layout='column')
 def load(path):
     c = json.loads(Path(path).read_text())
     if not isinstance(c, dict):
         raise ValueError('configuration must be a JSON object')
-    if any(c.get(k) != v for k,v in BASE.items()):
+    if any(c.get(k) != v for k,v in BASE.items() if k not in ('width', 'height')):
         raise ValueError('unsupported wire configuration')
+    image_parameters(c, 'tx')
+    image_parameters(c, 'rx')
     if c.get('backend') not in ('image_sequence','windows','linux'):
         raise ValueError('unknown backend')
     for field in ('timeout', 'fps'):

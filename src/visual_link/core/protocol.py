@@ -1,7 +1,8 @@
 import hashlib, struct
 from dataclasses import dataclass
 import numpy as np
-from .mapping import WIRE_BYTES, wire_to_image
+from .mapping import wire_to_image
+from .image import DEFAULT_IMAGE
 from .rs import codec, RSCodec, ReedSolomonError, parity
 HEADER_BYTES=255
 HEADER=struct.Struct(">8sBBBIIIQ32s32s")
@@ -11,14 +12,16 @@ IDENTITY=struct.Struct(">16sI12s")
 def digest(data):
     return hashlib.sha256(data).digest()
 
-def capacity(n=255, k=247):
+def capacity(n=255, k=247, parameters=DEFAULT_IMAGE):
     codec(n, k)
-    return ((WIRE_BYTES - HEADER_BYTES) // n) * k
+    if (n, k) == (255, 247):
+        return parameters.capacity
+    return ((parameters.wire_bytes - HEADER_BYTES) // n) * k
 
-def encode_frame(data, n=255, k=247, index=0, count=1, total=None, file_hash=None, seed=0, layout='column', identity=None):
+def encode_frame(data, n=255, k=247, index=0, count=1, total=None, file_hash=None, seed=0, layout='column', identity=None, parameters=DEFAULT_IMAGE):
     if (n,k) != (255,247) or layout != 'column':
         raise ValueError('stage one requires RS(255,247) and column layout')
-    cap = capacity(n, k)
+    cap = capacity(n, k, parameters)
     if len(data) > cap or not 0 <= index < count:
         raise ValueError('payload too long or invalid frame index')
     if total is None:
@@ -38,8 +41,8 @@ def encode_frame(data, n=255, k=247, index=0, count=1, total=None, file_hash=Non
     messages = np.frombuffer(padded, np.uint8).reshape(-1,k)
     body = np.concatenate((messages, parity(messages,n,k)), axis=1).tobytes()
     wire = head + body
-    wire += rng.bytes(WIRE_BYTES - len(wire))
-    return wire_to_image(wire, layout), wire
+    wire += rng.bytes(parameters.wire_bytes - len(wire))
+    return wire_to_image(wire, layout, parameters), wire
 
 @dataclass
 class Decoded:
@@ -50,17 +53,17 @@ class Decoded:
     corrected_symbols: int
     integrity: bool
 
-def decode_header(wire):
-    if len(wire) != WIRE_BYTES:
+def decode_header(wire, parameters=DEFAULT_IMAGE):
+    if len(wire) != parameters.wire_bytes:
         raise ValueError('wrong wire length')
     try:
         raw = bytes(RSCodec(128).decode(wire[:HEADER_BYTES])[0])
     except ReedSolomonError as exc:
         raise ValueError('uncorrectable protected header') from exc
     magic, version, n, k, index, count, length, total, frame_hash, file_hash = HEADER.unpack(raw[:HEADER.size])
-    if (magic,version) not in ((MAGIC,1),(b"GRAYRS02",2)) or not 0 <= index < count or length > capacity(n, k) or total < length:
+    if (magic,version) not in ((MAGIC,1),(b"GRAYRS02",2)) or not 0 <= index < count or length > capacity(n, k, parameters) or total < length:
         raise ValueError('invalid protected header')
-    if (n,k) != (255,247) or count != max(1,(total+capacity(n,k)-1)//capacity(n,k)) or length != min(capacity(n,k),max(0,total-index*capacity(n,k))):
+    if (n,k) != (255,247) or count != max(1,(total+capacity(n,k,parameters)-1)//capacity(n,k,parameters)) or length != min(capacity(n,k,parameters),max(0,total-index*capacity(n,k,parameters))):
         raise ValueError('unsupported parameters or inconsistent frame lengths')
     metadata = dict(n=n, k=k, index=index, count=count, length=length, total=total,
                     frame_sha256=frame_hash.hex(), file_sha256=file_hash.hex())
@@ -71,13 +74,13 @@ def decode_header(wire):
         metadata.update(session=session.hex(), config_id=config_id, file_id=file_id.hex())
     return metadata
 
-def decode_wire(wire):
-    metadata = decode_header(wire)
+def decode_wire(wire, parameters=DEFAULT_IMAGE):
+    metadata = decode_header(wire, parameters)
     n, k, length = metadata['n'], metadata['k'], metadata['length']
     rs = codec(n, k)
     # All full blocks are decoded, including padding, for a consistent block metric.
     blocks, failures, corrected = [], [], 0
-    for b, p in enumerate(range(HEADER_BYTES, HEADER_BYTES + capacity(n, k)//k*n, n)):
+    for b, p in enumerate(range(HEADER_BYTES, HEADER_BYTES + capacity(n, k, parameters)//k*n, n)):
         chunk = wire[p:p+n]
         try:
             message, _, errata = rs.decode(chunk)
@@ -91,10 +94,10 @@ def decode_wire(wire):
     return Decoded(metadata, data, blocks, failures, corrected,
                    digest(data).hex() == metadata['frame_sha256'])
 
-def decode(wire):
-    metadata = decode_header(wire)
+def decode(wire, parameters=DEFAULT_IMAGE):
+    metadata = decode_header(wire, parameters)
     n,k=metadata['n'],metadata['k']
-    blocks=np.frombuffer(wire[255:255+capacity(n,k)//k*n],np.uint8).reshape(-1,n)
+    blocks=np.frombuffer(wire[255:255+capacity(n,k,parameters)//k*n],np.uint8).reshape(-1,n)
     messages=blocks[:,:k].copy()
     bad=np.flatnonzero(np.any(parity(messages,n,k)!=blocks[:,k:],axis=1))
     corrected=0

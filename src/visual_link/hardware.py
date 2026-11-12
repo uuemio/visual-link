@@ -9,6 +9,7 @@ from pathlib import Path
 from .core.mapping import read_image, image_to_wire
 from .core.protocol import decode, digest
 from .core.reassembly import Reassembler
+from .core.image import image_parameters
 
 
 def save_json(path, value):
@@ -35,11 +36,12 @@ def capture(config, directory):
 
 def receive_one(config, image, directory):
     """Decode only captured pixels. Never accept a source file or seed."""
+    parameters = image_parameters(config, 'rx')
     result = Reassembler()
     try:
         if config['orientation'] == 'flip_vertical':
             image = image[::-1].copy()
-        result.add(decode(image_to_wire(image, captured=True, layout='column')))
+        result.add(decode(image_to_wire(image, captured=True, layout='column', parameters=parameters), parameters=parameters))
         data = result.finish()
         destination = directory/'recovered.bin'
         fd, temporary = tempfile.mkstemp(dir=directory)

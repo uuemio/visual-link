@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .protocol import capacity, digest
 from .reassembly import Reassembler
+from .image import DEFAULT_IMAGE
 
 
 def file_digest(stream):
@@ -17,14 +18,16 @@ def file_digest(stream):
 
 class FileSource:
     """Keep one source descriptor; hash and read at most one fragment at a time."""
-    def __init__(self, path):
+    def __init__(self, path, parameters=DEFAULT_IMAGE):
+        self.parameters = parameters
         self.stream = Path(path).open('rb')
         try:
             self.signature = self._signature()
             self.total = self.signature[0]
             self.file_hash = file_digest(self.stream)
             self._check()
-            self.count = max(1, (self.total + capacity()-1)//capacity())
+            cap = capacity(parameters=self.parameters)
+            self.count = max(1, (self.total + cap-1)//cap)
         except BaseException:
             self.close()
             raise
@@ -41,8 +44,9 @@ class FileSource:
         if not 0 <= index < self.count:
             raise ValueError('source index out of bounds')
         self._check()
-        offset = index * capacity()
-        length = min(capacity(), max(0, self.total-offset))
+        cap = capacity(parameters=self.parameters)
+        offset = index * cap
+        length = min(cap, max(0, self.total-offset))
         self.stream.seek(offset)
         data = self.stream.read(length)
         self._check()
@@ -60,7 +64,8 @@ class DiskReassembler(Reassembler):
     The caller serializes add/close. Once complete, finish may run in another
     thread: duplicate checks use metadata only and never touch its descriptor.
     """
-    def __init__(self, partial, destination):
+    def __init__(self, partial, destination, parameters=DEFAULT_IMAGE):
+        self.parameters = parameters
         super().__init__()
         self.partial = Path(partial)
         self.destination = Path(destination)
@@ -71,7 +76,7 @@ class DiskReassembler(Reassembler):
         if not frame.integrity or frame.failed_blocks:
             raise ValueError('invalid frame')
         m = frame.metadata
-        cap = capacity()
+        cap = capacity(parameters=self.parameters)
         if (m['count'] != max(1, (m['total']+cap-1)//cap)
                 or not 0 <= m['index'] < m['count']
                 or len(frame.data) != min(cap, max(0, m['total']-m['index']*cap))

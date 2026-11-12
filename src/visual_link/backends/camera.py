@@ -4,10 +4,13 @@ import time
 
 import cv2
 import numpy as np
+from ..core.image import image_parameters
 
 
 def capture_frames(config, metadata, stopped=lambda: False):
     """Yield continuous native BGR pixels using one negotiated device handle."""
+    parameters = image_parameters(config, 'rx')
+    width, height = parameters.width, parameters.height
     backend = config['backend']
     if backend == 'windows' and sys.platform == 'win32':
         api = cv2.CAP_DSHOW
@@ -19,7 +22,7 @@ def capture_frames(config, metadata, stopped=lambda: False):
     requested_format = 0xE436EB7D if backend == 'windows' else cv2.VideoWriter_fourcc(*'BGR3')
     format_name = 'MEDIASUBTYPE_RGB24' if backend == 'windows' else 'BGR3'
     camera = cv2.VideoCapture()
-    metadata.update(requested=dict(device=config['device'], width=1920, height=1080,
+    metadata.update(requested=dict(device=config['device'], width=width, height=height,
                                    format=format_name, format_id=requested_format), opencv=cv2.__version__)
     try:
         if not camera.open(config['device'], api):
@@ -27,8 +30,8 @@ def capture_frames(config, metadata, stopped=lambda: False):
         metadata['api'] = camera.getBackendName()
         metadata['set_accepted'] = {
             'fourcc': camera.set(cv2.CAP_PROP_FOURCC, requested_format),
-            'width': camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920),
-            'height': camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080),
+            'width': camera.set(cv2.CAP_PROP_FRAME_WIDTH, width),
+            'height': camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height),
             'buffers': camera.set(cv2.CAP_PROP_BUFFERSIZE, 1),
         }
         value = int(camera.get(cv2.CAP_PROP_FOURCC)) & 0xffffffff
@@ -40,8 +43,8 @@ def capture_frames(config, metadata, stopped=lambda: False):
             fps=camera.get(cv2.CAP_PROP_FPS), convert_rgb=camera.get(cv2.CAP_PROP_CONVERT_RGB))
         if value != requested_format:
             raise ValueError(f'driver format {value:#x} ({fourcc!r}) differs from {format_name}; no format fallback')
-        if (metadata['reported']['width'], metadata['reported']['height']) != (1920, 1080):
-            raise ValueError('driver did not negotiate native 1920x1080')
+        if (metadata['reported']['width'], metadata['reported']['height']) != (width, height):
+            raise ValueError(f'driver did not negotiate native {width}x{height}')
         deadline = time.monotonic() + config['timeout']
         valid = 0
         while not stopped():
@@ -51,8 +54,8 @@ def capture_frames(config, metadata, stopped=lambda: False):
             if not ok or image is None or image.size == 0:
                 time.sleep(0.01)
                 continue
-            if image.dtype != np.uint8 or image.shape != (1080, 1920, 3):
-                raise ValueError('capture must return native 1920x1080 uint8 BGR')
+            if image.dtype != np.uint8 or image.shape != (*parameters.shape, 3):
+                raise ValueError(f'capture must return native {width}x{height} uint8 BGR')
             valid += 1
             if valid <= 5:
                 continue

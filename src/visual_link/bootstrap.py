@@ -11,6 +11,7 @@ from .core.control import decode, encode
 from .hardware import save_json
 from .session import Session, State, Capabilities, CalibrationSession, NegotiationSession
 from . import calibration
+from .core.image import DEFAULT_IMAGE, image_parameters
 
 
 def _archive(source, destination):
@@ -20,6 +21,7 @@ def _archive(source, destination):
 
 
 def _receive(config, directory, messages, stop, heartbeat):
+    parameters = image_parameters(config, 'rx')
     stats = dict(captured=0, control_decoded=0, data_decoded=0,
                  data_decode_failed=0, duplicate_images=0,
                  control_cache_hits=0,
@@ -47,7 +49,7 @@ def _receive(config, directory, messages, stop, heartbeat):
                 if len(captured_times) == 4:
                     from .discovery import codec_timings
                     import statistics
-                    timings = codec_timings()+[round(statistics.median(b-a for a,b in zip(captured_times,captured_times[1:]))*1000,3)]
+                    timings = codec_timings(parameters)+[round(statistics.median(b-a for a,b in zip(captured_times,captured_times[1:]))*1000,3)]
                     messages.put(dict(probe=dict(capture=dict(metadata), measured_ms=timings)), timeout=config['timeout'])
                     heartbeat.value = time.monotonic()
                 continue
@@ -69,7 +71,7 @@ def _receive(config, directory, messages, stop, heartbeat):
             except ValueError:
                 if automatic and target is not None and measured is None:
                     try:
-                        result = calibration.measure(target, image)
+                        result = calibration.measure(target, image, parameters)
                     except ValueError:
                         continue
                     from .backends.image_sequence import write
@@ -86,7 +88,7 @@ def _receive(config, directory, messages, stop, heartbeat):
                     data_started = time.monotonic()
                     try:
                         from .core.protocol import decode as decode_data
-                        frame = decode_data(calibration.receive_wire(image, measured['calibration']))
+                        frame = decode_data(calibration.receive_wire(image, measured['calibration'], parameters), parameters)
                     except ValueError:
                         stats['data_decode_failed'] += 1
                         continue
@@ -125,7 +127,7 @@ def _receive(config, directory, messages, stop, heartbeat):
                 suppressed_control = None
             if automatic and message.kind == 'HELLO' and message.sender != peer:
                 peer = message.sender
-                target = calibration.pattern(int(peer,16))
+                target = calibration.pattern(int(peer,16), parameters)
                 measured = None
                 previous = None
             key = (message.sender, message.kind, message.ack, message.to_bytes())
@@ -154,6 +156,11 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
             from .backends.linux import display_one as display
         else:
             raise ValueError('bootstrap requires a platform backend')
+    tx_parameters = image_parameters(config, 'tx')
+    rx_parameters = image_parameters(config, 'rx')
+    # Mode identity is added to negotiation in step 3; never label 1200p as 1080p.
+    if negotiate and (tx_parameters != DEFAULT_IMAGE or rx_parameters != DEFAULT_IMAGE):
+        raise ValueError('connect mode negotiation currently requires 1080p; use explicit codec interfaces for other modes')
     directory = Path(directory)
     ctx = mp.get_context('spawn')
     messages, stop = ctx.Queue(maxsize=8), ctx.Event()
@@ -167,9 +174,9 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
     from .core.storage import DiskReassembler, FileSource
     from .core.protocol import encode_frame
     from .transport import Sender, Transport
-    receiver = DiskReassembler(directory/f'received-{session.peer_id}.part', directory/'received.bin')
+    receiver = DiskReassembler(directory/f'received-{session.peer_id}.part', directory/'received.bin', parameters=rx_parameters)
     transport = Transport(session)
-    payload = None if input_file is None else FileSource(input_file)
+    payload = None if input_file is None else FileSource(input_file, parameters=tx_parameters)
     delivery = None
     publisher = ThreadPoolExecutor(max_workers=1)
     tx_images = {}
@@ -208,7 +215,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
             return
         sender = transport.sender
         # Freeze identity and arguments before another peer can replace the session.
-        arguments = dict(index=index, count=sender.count, total=payload.total,
+        arguments = dict(parameters=tx_parameters, index=index, count=sender.count, total=payload.total,
                          file_hash=bytes.fromhex(sender.receipt['sha']), seed=index,
                          identity=(session.data_session, session.direction(True)[0],
                                    bytes.fromhex(sender.identity['f'])))
@@ -304,7 +311,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                         save_json(directory/f'transport-{before}.json', transport.stats())
                         if (directory/'sent.json').exists():
                             _archive(directory/'sent.json', directory/f'sent-{before}.json')
-                    receiver = DiskReassembler(directory/f'received-{session.peer_id}.part', directory/'received.bin')
+                    receiver = DiskReassembler(directory/f'received-{session.peer_id}.part', directory/'received.bin', parameters=rx_parameters)
                     tx_images = {}
                     tx_peer = None
                     tx_index = 0
@@ -386,7 +393,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
         index += 1
         record('tx', message)
         last = time.monotonic()
-        return encode(message)
+        return encode(message, tx_parameters.width, tx_parameters.height)
 
     failure = None
     try:
@@ -405,13 +412,13 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
             session.capabilities = Capabilities(versions=(1,2) if negotiate else (1,),
                       receive_window=config.get('receive_window', 1), measured_ms=tuple(probe['measured_ms']))
             from .backends.image_sequence import write
-            target_image = calibration.pattern(int(session.local_id,16))
+            target_image = calibration.pattern(int(session.local_id,16), tx_parameters)
             write(directory/'calibration-target.png', target_image)
         began = time.monotonic()
         last = began
         first = session.outgoing()[0]
         record('tx', first)
-        display(config, encode(first), seconds,
+        display(config, encode(first, tx_parameters.width, tx_parameters.height), seconds,
                 ready=lambda value: save_json(directory/'ready.json', value), advance=advance)
         advance(present=False)  # Drain final messages and check worker health.
         if (session.state != State.CAPABILITIES or (calibrate and not session.calibrated)

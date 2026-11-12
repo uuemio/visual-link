@@ -63,19 +63,21 @@ def signals():
 
 
 from contextlib import contextmanager
+from ..core.image import DEFAULT_IMAGE
 
 
 @contextmanager
-def identity_signal(device, allow_change=False):
-    """Enforce an actual 1080p HDMI timing, restoring the complete active configuration."""
+def identity_signal(device, allow_change=False, parameters=DEFAULT_IMAGE):
+    """Validate the selected native timing; retain the legacy 1080p-only switch."""
+    width, height = parameters.width, parameters.height
     ct, api, paths, modes, names = _configuration()
     index = names.index(device)
     path = paths[index]
     signal = modes[path.target.modeInfoIdx].value.signal
-    changed = (signal.activeSize.cx, signal.activeSize.cy) != (1920, 1080) or path.target.scaling != 1
+    changed = (signal.activeSize.cx, signal.activeSize.cy) != (width, height) or path.target.scaling != 1
     before = signals()
-    if changed and not allow_change:
-        raise ValueError('actual HDMI signal is scaled or not 1080p; temporary_1080p requires explicit configuration')
+    if changed and (not allow_change or parameters != DEFAULT_IMAGE):
+        raise ValueError(f'actual HDMI signal must be unscaled {width}x{height}; temporary_1080p only switches 1080p')
     saved_paths = type(paths).from_buffer_copy(paths)
     saved_modes = type(modes).from_buffer_copy(modes)
     api.SetDisplayConfig.argtypes = [w.UINT, ct.c_void_p, w.UINT, ct.c_void_p, w.UINT]
@@ -98,7 +100,7 @@ def identity_signal(device, allow_change=False):
                 raise OSError(rc, 'cannot set an unscaled actual 1080p HDMI signal')
         after = signals()
         active = next(row for row in after if row['device'] == device)
-        if active['active'] != [1920, 1080] or active['source'] != [1920, 1080] or active['scaling'] != 1:
+        if active['active'] != [width, height] or active['source'] != [width, height] or active['scaling'] != 1:
             raise ValueError('actual HDMI signal remains scaled; refusing display')
         yield dict(signal_before=before, signal_active=active, signal_changed=changed)
     finally:

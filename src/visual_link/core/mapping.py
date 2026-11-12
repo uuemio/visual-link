@@ -1,8 +1,12 @@
 import cv2
 import numpy as np
-WIDTH, HEIGHT, OFFSET, TOP = 1920,1080,2,3
+from .image import DEFAULT_IMAGE
+
+# Legacy default aliases; active paths use an explicit ImageParameters instance.
+WIDTH, HEIGHT = DEFAULT_IMAGE.width, DEFAULT_IMAGE.height
+OFFSET, TOP = DEFAULT_IMAGE.offset, DEFAULT_IMAGE.top
 SYMBOL_BITS=4
-WIRE_BYTES=1918*1077//2
+WIRE_BYTES=DEFAULT_IMAGE.wire_bytes
 CODEBOOK=np.arange(16,dtype=np.uint8)*17
 DECISION=((np.arange(256,dtype=np.uint16)+8)//17).astype(np.uint8)
 
@@ -16,23 +20,23 @@ def symbols(data):
     out[::2], out[1::2] = values >> 4, values & 15
     return out
 
-def wire_to_image(wire, layout='sequential'):
-    if len(wire) != WIRE_BYTES:
+def wire_to_image(wire, layout='sequential', parameters=DEFAULT_IMAGE):
+    if len(wire) != parameters.wire_bytes:
         raise ValueError('wrong wire length')
     if layout == 'column':
-        wire = np.frombuffer(wire, np.uint8).reshape((WIDTH-OFFSET)//2, -1).T.copy().tobytes()
+        wire = np.frombuffer(wire, np.uint8).reshape(parameters.interleave_shape).T.copy().tobytes()
     elif layout != 'sequential':
         raise ValueError('unknown wire layout')
-    image = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
-    image[TOP:, OFFSET:] = CODEBOOK[symbols(wire)].reshape(HEIGHT-TOP, WIDTH - OFFSET)
+    image = np.zeros(parameters.shape, dtype=np.uint8)
+    image[parameters.top:, parameters.offset:] = CODEBOOK[symbols(wire)].reshape(parameters.active_height, parameters.active_width)
     return image
 
-def image_to_wire(image, captured=True, layout='sequential'):
-    if image.dtype != np.uint8 or image.shape[:2] != (HEIGHT, WIDTH):
-        raise ValueError('expected native 1920x1080 uint8 image')
+def image_to_wire(image, captured=True, layout='sequential', parameters=DEFAULT_IMAGE):
+    if image.dtype != np.uint8 or image.shape[:2] != parameters.shape:
+        raise ValueError(f'expected native {parameters.width}x{parameters.height} uint8 image')
     if image.ndim == 3:
         image = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2GRAY)
-    pixels = image[TOP:, :WIDTH-OFFSET] if captured else image[TOP:, OFFSET:]
+    pixels = image[parameters.top:, :parameters.active_width] if captured else image[parameters.top:, parameters.offset:]
     values = DECISION[pixels].ravel()
     if SYMBOL_BITS == 4:
         packed = ((values[::2] << 4) | values[1::2])
@@ -41,7 +45,7 @@ def image_to_wire(image, captured=True, layout='sequential'):
         bits = ((values[:,None] >> shifts)&1).astype(np.uint8)
         packed = np.packbits(bits.ravel())
     if layout == 'column':
-        packed = packed.reshape(-1, (WIDTH-OFFSET)//2).T.copy().ravel()
+        packed = packed.reshape(-1, parameters.active_width//2).T.copy().ravel()
     elif layout != 'sequential':
         raise ValueError('unknown wire layout')
     return packed.tobytes()
