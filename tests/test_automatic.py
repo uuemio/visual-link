@@ -25,13 +25,40 @@ class AutomaticTests(unittest.TestCase):
         peer = Capabilities(modes=MODES, rx_modes=MODES)
         self.assertEqual(common_modes(caps,peer), list(MODES[::-1]))
         self.assertEqual(common_modes(peer,caps), [MODES[0]])
-        observed = dict(display=dict(declared=[dict(width=1920,height=1200),dict(width=1920,height=1080,interlaced=True)]),
+        observed = dict(display=dict(current_output=dict(width=1920,height=1200),
+                                    declared=[dict(width=1920,height=1200),dict(width=1920,height=1080,interlaced=True)]),
                         capture=dict(declared=[dict(width=1920,height=1200,format='YUYV'),dict(width=1920,height=1080,format='BGR3')]))
         result = capabilities(observed,{})
         self.assertEqual(result.modes, (MODES[1],))
         self.assertEqual(result.rx_modes, (MODES[0],))
         with self.assertRaises(ValueError):
             capabilities(observed,dict(candidate_modes=[[1920,1080]]))
+
+    def test_current_output_limits_automatic_upgrade(self):
+        observed = dict(display=dict(current_output=dict(width=1920,height=1080),
+                                    declared=[dict(width=w,height=h) for w,h in MODES]),
+                        capture=dict(declared=[dict(width=w,height=h,format='BGR3') for w,h in MODES]))
+        lower = capabilities(observed, {})
+        self.assertEqual(lower.modes, (MODES[0],))
+        self.assertEqual(set(lower.rx_modes), set(MODES))
+        requested = capabilities(observed, dict(candidate_modes=[[1920,1200]]))
+        self.assertEqual(requested.modes, (MODES[1],))
+        observed['display']['current_output']['height'] = 1200
+        higher = capabilities(observed, {})
+        self.assertEqual(common_modes(lower, higher), [MODES[0]])
+        self.assertEqual(common_modes(higher, lower), list(MODES[::-1]))
+
+    def test_startup_does_not_consume_business_duration(self):
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        @contextmanager
+        def startup(*args):
+            yield {'selected': True}, 'session', 'modes'
+        with patch('visual_link.automatic.startup', startup), \
+             patch('visual_link.bootstrap.time.monotonic', side_effect=[0., 55.]), \
+             patch('visual_link.bootstrap._exchange') as exchange:
+            bootstrap.exchange({}, 'run', 60, display=object(), calibrate=True, negotiate=True)
+        self.assertEqual(exchange.call_args.args[2], 60)
 
     def test_modes_fallback_stale_status_and_exhaustion(self):
         a=ModeSession(Capabilities(modes=MODES,rx_modes=MODES),A)

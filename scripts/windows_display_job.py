@@ -39,7 +39,7 @@ def main():
                 if job.get('input'):
                     command.extend(['--input', job['input']])
                 result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
-                                        timeout=job['seconds']+config['timeout']+10)
+                                        timeout=job['seconds']*(2 if mode == 'connect' else 1)+config['timeout']+10)
             report.update(status='complete' if result.returncode == 0 else 'failed', exitcode=result.returncode)
         report['original_mode_restored'] = True
     except Exception as exc:

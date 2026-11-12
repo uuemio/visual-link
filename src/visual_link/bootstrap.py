@@ -493,10 +493,6 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
         else:
             raise ValueError('bootstrap requires a platform backend')
     from .automatic import startup
-    began = time.monotonic()
     with startup(config, directory, seconds, display) as (selected, session, modes):
-        remaining = seconds - (time.monotonic()-began)
-        if remaining <= 0:
-            raise ValueError('startup exhausted connection duration')
-        return _exchange(selected, directory, remaining, display, receive_target, True, True,
+        return _exchange(selected, directory, seconds, display, receive_target, True, True,
                          input_file, session=session, startup_result=modes)

@@ -33,7 +33,11 @@ def capabilities(observed, config):
                 continue
             result.add(mode)
         return tuple(sorted(result, reverse=True))
-    return Capabilities(versions=(2, 3), modes=sizes(observed['display']['declared']),
+    modes = sizes(observed['display']['declared'])
+    current = tuple(observed['display']['current_output'][key] for key in ('width', 'height'))
+    if current in modes:
+        modes = tuple(mode for mode in modes if mode[0]*mode[1] <= current[0]*current[1])
+    return Capabilities(versions=(2, 3), modes=modes,
                         rx_modes=sizes(observed['capture']['declared'], True),
                         receive_window=config.get('receive_window', 1))
 

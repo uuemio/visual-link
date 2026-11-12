@@ -11,8 +11,8 @@
 <article>
 <form class="card" id="form"><div class="heading"><span class="step">01</span><h2>准备文件 · 启动传输</h2></div>
 <label for="input">待发送文件</label><input id="input" placeholder="填写本机文件路径，留空则仅接收" autocomplete="off"><p class="hint">支持完整路径，或相对于项目目录的路径。</p>
-<div class="two"><div><label for="seconds">运行时间 / 秒</label><input id="seconds" type="number" min="1" step="1" value="180" required></div><div class="config"><strong>本端推荐配置</strong><span id="config">—</span></div></div>
-<p class="hint">两端尽量在半分钟内启动；文件交付后继续应答至运行时间结束。</p>
+<div class="two"><div><label for="seconds">传输阶段 / 秒</label><input id="seconds" type="number" min="1" step="1" value="180" required></div><div class="config"><strong>本端推荐配置</strong><span id="config">—</span></div></div>
+<p class="hint">两端尽量在半分钟内启动；启动协商单独计时，文件交付后继续应答至传输阶段结束。</p>
 <label for="output">输出目录</label><input id="output" placeholder="留空自动创建 runs/web-时间-编号" autocomplete="off">
 <button id="start" type="submit">启动传输 ↗</button><div id="notice" role="alert"></div></form>
 <section class="card" aria-live="polite"><div class="status-head"><div class="heading" style="margin:0"><span class="step">02</span><h2>传输状态</h2></div><span class="badge" id="badge">未启动</span></div>

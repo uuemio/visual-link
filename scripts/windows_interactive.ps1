@@ -34,11 +34,12 @@ $jobScript = Join-Path $PSScriptRoot 'windows_display_job.py'
 $arguments = '"' + $jobScript + '" "' + $jobFile + '"'
 $action = New-ScheduledTaskAction -Execute $pythonPath -Argument $arguments -WorkingDirectory $root
 $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds ($Seconds+120)) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$duration = $Seconds * $(if ($Mode -eq 'connect') { 2 } else { 1 })
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds ($duration+120)) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
 try {
  Start-ScheduledTask -TaskName $taskName
- $deadline = (Get-Date).AddSeconds($Seconds+100)
+ $deadline = (Get-Date).AddSeconds($duration+100)
  do {
   Start-Sleep -Milliseconds 500
   if (Test-Path $job.result) { break }
