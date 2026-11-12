@@ -8,6 +8,8 @@ def load(path):
     c = json.loads(Path(path).read_text())
     if not isinstance(c, dict):
         raise ValueError('configuration must be a JSON object')
+    c = dict(BASE, timeout=30, fps=10, orientation='normal', pixel_format='BGR3',
+             receive_window=8) | c
     if any(c.get(k) != v for k,v in BASE.items() if k not in ('width', 'height')):
         raise ValueError('unsupported wire configuration')
     image_parameters(c, 'tx')

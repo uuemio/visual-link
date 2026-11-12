@@ -298,6 +298,10 @@ def startup(config, directory, seconds, display):
                                 round=session.round, indices=session.indices,
                                 local_status=session.local_status, peer_status=session.peer_status,
                                 selected_modes=None if not session.round else session.selected(), actual_capture=actual)
+                if session.round:
+                    tx, rx = session.selected() if session.coordinator else session.selected()[::-1]
+                    progress.update(tx_mode=dict(zip(('width', 'height'), tx)),
+                                    rx_mode=dict(zip(('width', 'height'), rx)))
                 if time.monotonic()-progress_at >= 0.5:
                     save_json(directory/'progress.json', progress)
                     progress_at = time.monotonic()

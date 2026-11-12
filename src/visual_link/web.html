@@ -17,6 +17,7 @@
 <button id="start" type="submit">启动传输 ↗</button><div id="notice" role="alert"></div></form>
 <section class="card" aria-live="polite"><div class="status-head"><div class="heading" style="margin:0"><span class="step">02</span><h2>传输状态</h2></div><span class="badge" id="badge">未启动</span></div>
 <h3 id="phase">等待启动</h3><p id="description">文件路径留空时，本机只接收对端的文件。</p>
+<div class="config" id="modes"><strong>本端发送 → 对端接收</strong><span id="tx-mode">等待协商</span><strong>对端发送 → 本端接收</strong><span id="rx-mode">等待协商</span><strong>本端实际采集</strong><span id="capture-mode">等待采集</span><p id="validation" class="detail"></p></div>
 <div class="progress-item"><div class="progress-title"><span>发送进度</span><span id="tx-value">—</span></div><div class="bar"><div class="fill" id="tx-bar"></div></div><div class="detail" id="tx-detail">按对端已确认分片计算</div></div>
 <div class="progress-item"><div class="progress-title"><span>接收进度</span><span id="rx-value">—</span></div><div class="bar"><div class="fill" id="rx-bar"></div></div><div class="detail" id="rx-detail">按本机实际收到的分片计算</div></div><p id="error" role="alert"></p></section>
 </article>
@@ -26,11 +27,16 @@
 <script>
 const $=id=>document.getElementById(id);const labels={idle:'未启动',running:'运行中',success:'成功',failed:'失败'};
 function progress(prefix,n,total,confirmed,receiving){const pct=total?Math.floor(n/total*100):0;$(prefix+'-value').textContent=total?`${pct}%`:'—';$(prefix+'-bar').style.width=pct+'%';$(prefix+'-detail').textContent=total?`${n} / ${total} 片 · `+(confirmed?'交付确认完成':n===total?'分片完成，正在校验与交付确认':receiving?'已实际接收':'已获对端确认'):(receiving?'等待对端文件':'等待连接');}
-function render(s){$('host').textContent=(s.platform==='windows'?'Windows':'树莓派')+' · 本机';$('platform').textContent=s.platform==='windows'?'Windows':'树莓派';$('config').textContent=s.config;$('badge').textContent=labels[s.status];$('badge').className='badge '+s.status;$('start').disabled=s.status==='running';$('start').textContent=s.status==='running'?'传输进行中…':'启动传输 ↗';for(const id of ['input','seconds','output'])$(id).disabled=s.status==='running';
+function size(m){return m&&m.width&&m.height?`${m.width} × ${m.height}`:'等待协商';}
+function renderModes(s){const m=s.modes||s.startup||{},a=m.actual_capture||{},c=a.capture||{},fps=(c.reported||{}).fps,v={0:'等待',1:'通过','-1':'失败'};
+$('tx-mode').textContent=size(m.tx_mode);$('rx-mode').textContent=size(m.rx_mode);
+$('capture-mode').textContent=a.actual?`${size(a.actual)} · ${(c.actual||{}).channels||'—'} 通道 · 驱动帧率${fps>0?' '+fps+' fps':'未提供'}`:'等待采集';
+const st=s.startup||{};$('validation').textContent=s.connection_ready?'双向选档与标定通过，配置已提交':st.round?`第 ${st.round} 轮候选 · 本端发送模式${v[(st.local_status||[])[0]]||'等待'} · 本端采集标定${v[(st.local_status||[])[1]]||'等待'} · 对端${(st.peer_status||[]).map(x=>v[x]).join(' / ')||'等待'}`:'等待能力交换';}
+function render(s){renderModes(s);$('host').textContent=(s.platform==='windows'?'Windows':'树莓派')+' · 本机';$('platform').textContent=s.platform==='windows'?'Windows':'树莓派';$('config').textContent=s.config;$('badge').textContent=labels[s.status];$('badge').className='badge '+s.status;$('start').disabled=s.status==='running';$('start').textContent=s.status==='running'?'传输进行中…':'启动传输 ↗';for(const id of ['input','seconds','output'])$(id).disabled=s.status==='running';
 const t=s.transport||{};progress('tx',t.acknowledged||0,s.send_count,t.sent_confirmed,false);progress('rx',s.received_count||0,s.receive_count,s.receive_complete&&t.receive_finish_confirmed,true);
 if(s.sending===false&&s.status!=='idle')$('tx-detail').textContent='本次仅接收';
 let phase='等待启动',desc='文件路径留空时，本机只接收对端的文件。';
-if(s.status==='running'){phase=s.connection_ready?'正在传输':'正在连接';desc=s.connection_ready?'两向独立传输，进度随实际分片更新。':`正在发现对端、标定与协商 · ${({calibrating:'图像标定',proposing:'提交配置',accepted:'已接受配置',committing:'确认配置',committed:'配置已确认',ready:'连接就绪'})[s.phase]||s.state||'启动设备'}`;
+if(s.status==='running'){phase=s.connection_ready?'正在传输':'正在连接';desc=s.connection_ready?'两向独立传输，进度随实际分片更新。':`正在发现对端、标定与协商 · ${({capabilities:'交换设备能力与候选',mode_calibration:'应用模式、采集锁定与标定',calibrating:'图像标定',proposing:'提交配置',accepted:'已接受配置',committing:'确认配置',committed:'配置已确认',ready:'连接就绪'})[s.phase||s.state]||s.state||'启动设备'}`;
 if((s.send_count&&t.acknowledged===s.send_count&&!t.sent_confirmed)||(s.receive_count&&s.received_count===s.receive_count&&!(s.receive_complete&&t.receive_finish_confirmed))){phase='正在交付确认';desc='分片已传完，等待文件校验、发布与交付回执。';}
 if((!s.sending||t.sent_confirmed)&&s.receive_complete&&t.receive_finish_confirmed){phase='交付确认完成';desc='继续应答对端，等待运行时间结束及进程退出。';}}
 if(s.status==='success'){phase='传输成功';desc='程序已正常退出，本次文件交付确认全部完成。';}if(s.status==='failed'){phase='传输失败';desc='请根据具体原因和本次日志检查。';}

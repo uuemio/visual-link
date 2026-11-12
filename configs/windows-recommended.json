@@ -1,21 +1,15 @@
 {
-  "width": 1920,
-  "height": 1080,
-  "top": 3,
-  "offset": 2,
-  "levels": 16,
-  "n": 255,
-  "k": 247,
-  "layout": "column",
   "backend": "windows",
   "device": 0,
   "monitor": 1,
-  "pixel_format": "BGR3",
-  "orientation": "normal",
-  "timeout": 30,
-  "fps": 10,
-  "temporary_1080p": false,
-  "receive_window": 8,
-  "send_fps_limit": 1.0,
-  "control_hold_seconds": 0.1
+  "candidate_modes": [
+    [
+      1920,
+      1080
+    ],
+    [
+      1920,
+      1200
+    ]
+  ]
 }

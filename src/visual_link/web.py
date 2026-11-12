@@ -14,7 +14,11 @@ from uuid import uuid4
 
 
 def read_json(path):
-    return json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
+    try:
+        return json.loads(path.read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        # Startup reports may be replaced while the page polls them.
+        return {}
 
 
 def outcome(result, sending):
@@ -94,6 +98,9 @@ class Transfer:
         running = self.process is not None and self.process.poll() is None
         result = read_json(directory/'result.json') if not running else {}
         progress = read_json(directory/'progress.json')
+        startup = read_json(directory/'startup/progress.json')
+        value.update(startup)
+        value['startup'] = startup
         value.update(progress)
         value.update(output=str(directory), log=str(self.log),
                      program_log=str(directory.with_name(directory.name+'-job.log')) if self.platform == 'windows' else str(self.log),
@@ -103,7 +110,7 @@ class Transfer:
             value.update(status='running', error=None)
         else:
             error = self.error
-            if not error and self.process.returncode != 0:
+            if not error and self.process is not None and self.process.returncode != 0:
                 job = read_json(directory.with_name(directory.name+'-job-result.json')) if self.platform == 'windows' else {}
                 encoding = locale.getpreferredencoding(False) if self.platform == 'windows' else 'utf-8'
                 details = self.log.read_text(encoding=encoding, errors='replace').strip()[-4000:]
