@@ -116,7 +116,10 @@ def decode(image):
         patch = binary[y:y+h, x:x+w]
         for rotation in range(4):
             rotated = np.rot90(patch, rotation)
-            if abs(rotated.shape[1]/rotated.shape[0] - COLUMNS/ROWS) > 0.15:
+            # USB capture may scale 1200p to 1080p independently on each axis.
+            # Normalize the located rectangle; RS/header/CRC still validate it.
+            ratio = rotated.shape[1]/rotated.shape[0] / (COLUMNS/ROWS)
+            if not 0.75 <= ratio <= 1.34:
                 continue
             for view in (rotated, rotated[:, ::-1]):
                 grid = cv2.resize(view, (COLUMNS, ROWS), interpolation=cv2.INTER_AREA)

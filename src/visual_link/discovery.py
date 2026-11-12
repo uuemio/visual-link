@@ -126,3 +126,26 @@ def refresh_capture(config, directory, require_match=True):
     if require_match and actual != requested:
         raise ValueError('actual capture differs from candidate; see probe.json')
     return updated, image, probe
+
+
+def startup_capture_modes(observed):
+    """Prefer reported HDMI timing; otherwise try supported USB output modes."""
+    import re
+    capture = observed['capture']
+    modes = [(1920, 1080), (1920, 1200)]
+    declared = {(r.get('width'), r.get('height')) for r in capture['declared']
+                if r.get('format') == 'BGR3'}
+    modes = [m for m in modes if m in declared]
+    timing = capture.get('input_timing', {})
+    if timing.get('returncode') == 0:
+        text = timing.get('stdout', '')
+        width = re.search(r'Active width:\s*(\d+)', text)
+        height = re.search(r'Active height:\s*(\d+)', text)
+        if width and height:
+            native = (int(width[1]), int(height[1]))
+            if native in modes:
+                modes.remove(native)
+                modes.insert(0, native)
+    if not modes:
+        raise ValueError('no supported bootstrap capture mode')
+    return [dict(width=w, height=h) for w, h in modes]

@@ -146,7 +146,11 @@ def _receive(config, directory, messages, stop, peer=None):
     target = None if peer is None else calibration.pattern(int(peer, 16), parameters)
     measured = None
     attempt = 0
+    locked_mode = None
     while not stop.is_set():
+        if peer is None:
+            modes = config.get('_startup_rx_modes', [dict(width=parameters.width, height=parameters.height)])
+            config = dict(config, rx_mode=locked_mode or modes[attempt % len(modes)])
         metadata = {}
         probe = None
         frames = None
@@ -168,9 +172,15 @@ def _receive(config, directory, messages, stop, peer=None):
             for image in frames:
                 if stop.is_set():
                     break
+                if peer is None and not (directory/f'initial-{attempt:03d}.png').exists():
+                    from .backends.image_sequence import write
+                    write(directory/f'initial-{attempt:03d}.png', image)
+                    save_json(directory/f'initial-{attempt:03d}.json', metadata)
                 try:
                     message = decode(image)
                 except ValueError:
+                    if peer is None and locked_mode is None and time.monotonic()-began > 4:
+                        break
                     if target is not None and measured is None and image.shape[:2] == parameters.shape:
                         try:
                             measured = calibration.measure(target, image, parameters)
@@ -203,6 +213,8 @@ def _receive(config, directory, messages, stop, peer=None):
                         timings.append(round(max(statistics.median(b-a for a,b in zip(samples,samples[1:])), 0.001)*1000, 3))
                         messages.put(dict(calibration=measured, timings=timings), timeout=1)
                     continue
+                if peer is None:
+                    locked_mode = config['rx_mode']
                 messages.put(message, timeout=1)
                 # A stream of valid controls can also precede input lock/calibration.
                 if target is not None and measured is None and time.monotonic()-began > 8:
@@ -240,7 +252,8 @@ def startup(config, directory, seconds, display):
     session = ModeSession(capabilities(observed, config))
     current = observed['display']['current_output']
     bootstrap_canvas = {k: current[k] for k in ('width', 'height')}
-    canvas = dict(config, _control_canvas=bootstrap_canvas)
+    canvas = dict(config, _control_canvas=bootstrap_canvas,
+                  _startup_rx_modes=discovery.startup_capture_modes(observed))
     ctx = mp.get_context('spawn')
     deadline = time.monotonic()+seconds
     applied_round = 0
