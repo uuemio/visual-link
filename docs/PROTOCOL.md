@@ -12,9 +12,9 @@
 
 分片数为`max(1,ceil(total/C))`，index从0开始，发送端读取与接收端落盘偏移均为`index×C`。最后一片长度为`min(C,max(0,total-index×C))`；空文件也发送一片。v1/v2头部不增加宽高字段，解码前必须由调用方指定该方向的参数，禁止从载荷长度猜测几何。
 
-配置公共`width`、`height`作用于两个方向；可选`tx_mode`、`rx_mode`对象以`width`、`height`覆盖本地方向，例如`"tx_mode":{"width":1920,"height":1200},"rx_mode":{"width":1920,"height":1080}`。显示、pattern及离线tx使用tx参数；采集、compare、标定、离线rx和磁盘接收使用rx参数。省略方向对象保持现有1080p配置兼容。Windows已有`temporary_1080p`仍只切换其原有1080p时序，1200p须预先设为对应原生模式；设备能力枚举及设置模式由开发计划步骤2接入。
+配置公共`width`、`height`作用于两个方向；可选`tx_mode`、`rx_mode`对象以`width`、`height`覆盖本地方向，例如`"tx_mode":{"width":1920,"height":1200},"rx_mode":{"width":1920,"height":1080}`。显示、pattern及离线tx使用tx参数；采集、compare、标定、离线rx和磁盘接收使用rx参数。省略方向对象保持现有1080p配置兼容。离线显示保持显式尺寸；`connect`通过设备声明及`apply_display_mode`自动切换并在会话结束恢复原显示模式。
 
-步骤1只提供显式图像接口；下文CAPS、REPORT及配置消息仍是现有1080p协商。`connect`在协商增加模式身份前仅接受双向1080p，其他显式配置会提前报错，避免以旧配置ID误解释1200p。步骤3将把方向配置关联到本参数对象。
+`connect`分别协商两个方向的`ImageParameters`，配置ID绑定宽高和布局，发送分片及接收偏移使用各自方向的净容量。
 
 GF(256), prim=0x11d, generator=2, fcr=0, c_exp=8。数据随机填充使用NumPy default_rng(seed).bytes；依赖锁定2.2.6。
 业务随机源独立使用SHA256(ASCII十进制非负seed + ':' + uint64大端counter)，counter从0开始，拼接并截到size。
@@ -23,7 +23,7 @@ RX不需要源数据或seed。每块通过RS，帧SHA和最终文件SHA/总长�
 无帧时预期数量及丢失数未知。无ACK/重传，整帧丢失不能由RS恢复。暂不支持跨会话ID。
 不纠正码块之后的尾部字节（1080p为93，1200p为168）：它不属于业务或受保护填充；码块内填充同样必须通过RS。
 
-# 引导控制 v1（1080p双向实机验收通过）
+# 引导控制 v1
 
 引导格式不使用数据帧ROI、灰度档位或行序配置。白色画布中居中放置48行×92列单元矩形，外圈全黑，四周至少2单元白色静区。单元边长取`min(width//96,height//52)`，至少4像素。内部46×90单元按行填入黑0/白1位，最高位先发；前4080位是两个RS(255,223)码字，其余60位为黑色。接收端用Otsu阈值寻找黑色外轮廓，按矩形定位并尝试四种旋转及镜像。当前仅支持轴对齐、完整外框，未实现透视/任意角度或外框裁切恢复。
 
@@ -35,12 +35,12 @@ JSON为六元素数组，字段按顺序如下：
 |---|---|
 | sender | 本机启动随机UUID的32位小写hex |
 | peer | 接收方UUID，HELLO为null |
-| sequence | 1到2³²−1；HELLO=1、CAPS=2、REPORT=3、配置消息=4..7 |
+| sequence | 1到2³²−1；HELLO=1、CAPS=2、REPORT=3、配置消息=4..7，SELECT=8、STATUS=9（以kind区分ACK/FINISH） |
 | ack | 关联阶段序号；HELLO=0、CAPS=0/2、REPORT=0/3，配置消息见后文 |
-| kind | 当前处理HELLO、CAPS、REPORT、PROPOSE、ACCEPT、COMMIT、READY；ACK/FINISH见可靠传输小节 |
+| kind | 当前处理HELLO、CAPS、SELECT、STATUS、REPORT、PROPOSE、ACCEPT、COMMIT、READY；ACK/FINISH见可靠传输小节 |
 | body | HELLO为空对象；CAPS为以下能力对象 |
 
-能力对象字段：versions（实现的协议版本），profiles（实现的数据档位），modes（软件支持的宽高对），receive_window（接收窗口上限）。当前默认值为`[1]`、`["v1-gray16"]`、`[[1920,1080]]`、1。这些字段描述软件支持范围；connect另提供所选设备观测、measured_ms测量和自动标定，见下文。connect的versions为[1,2]。
+能力对象字段：`versions`、`profiles`、`modes`（本端显示声明尺寸）、`rx_modes`（本端原生BGR3采集声明尺寸）、`layout`（当前1）、`receive_window`。`connect`的versions为[2,3]，3表示含方向尺寸的启动协商，业务头仍为2；双方须同步升级。`modes/rx_modes`仅包含设备明确声明且编解码器支持的1920×1080或1920×1200，可由配置`candidate_modes`进一步限制。其他原生格式不作为候选，尺寸范围声明不伪造离散档位。空能力或任一方向无交集明确失败。CAPS在同一会话内保持不变；可选`measured_ms`仍可用于独立软件会话，自动启动通过STATUS交换当前选定模式的测量。
 
 会话ID为双方UUID按字典序排序并以冒号连接；较小UUID是后续配置协商的协调端。
 
@@ -60,13 +60,17 @@ JSON为六元素数组，字段按顺序如下：
 
 ## 自动探测与双向标定（connect）
 
-`connect`在引导交换前查询所选显示输出，使用同一采集后端确认所选设备实际协商的1080p/BGR格式；测量4张预热后采集帧之间的3个间隔中值，并做一次v1编码及本地BGR完整接收路径校验（控制搜索、阈值查表、RS及哈希）。CAPS可选字段`measured_ms`依次为完整帧编码、完整接收处理（含本地BGR展开、控制搜索、像素转wire及RS/哈希）和采集间隔毫秒值，必须为三个有限正数；缺省为空，兼容旧CAPS。设备和显示详细观测保存在probe.json。接收处理用本地编码图模拟BGR输入和已知发送ROI，不计磁盘写图、GUI及完整文件落盘，也不替代实际标定。此测量仅对应所选设备、当前已实现的1080p档位，不代表枚举所有硬件模式或持续吞吐上限；窗口默认1，connect可通过receive_window配置1..64；此处只确定初始上限；connect运行时的发送限制见后文。
+启动顺序：当前画布HELLO → CAPS → SELECT双方向候选 → 显示模式应用 → 采集重开与信号锁定 → 标定和处理能力测量 → STATUS确认 → REPORT → PROPOSE/ACCEPT/COMMIT/READY → 文件传输。切换前后保持相同UUID和会话ID。初始引导使用所选显示器当前实际尺寸；切换前关闭旧GUI及采集进程，之后重新创建原生画布。
 
-能力交换完成后，每4秒预留1秒显示本机标定图，其余时隙继续轮询HELLO/CAPS/REPORT。标定图使用发送方32位hex会话UUID转成整数作为NumPy default_rng种子，沿用16级空间随机图生成器。接收器只根据视频HELLO生成预期图，不读取对端文件或通过网络获取图像。会话UUID变化时重新生成目标并清空标定状态。
+协调端按每方向“发送端modes ∩ 接收端rx_modes”生成候选，以像素数从大到小排序。SELECT固定sequence=8、ack=0/8，body=`{"r":1,"i":[0,0]}`；r为正整数轮次，i为按排序UUID方向的两个候选索引。收到相同SELECT后以ack=8重复确认；双方均收到ack=8，并在原画布重复显示SELECT至少3秒后才关闭旧采集与显示，避免确认尚未显示就改变输入信号。控制图适配当前画布，不依赖业务布局。STATUS固定sequence=9、ack=0，body=`{"r":1,"s":[1,1],"t":[encode_ms,receive_ms,sample_ms]}`。s按本端tx/rx顺序：0等待、1验证成功、-1失败；t在本端rx标定后提供三个有限正毫秒值，之前null。tx成功要求显示模式实际应用；rx成功要求实际采集尺寸相符、完整标定零符号错误。
 
-接收器在两个行序、±8整数像素偏移范围内按稀疏样本相关系数搜索。最佳系数至少0.995，与次佳相差至少0.05；仅接受完整保留v1源ROI的映射。学习16级灰度实际最小/最大/均值，要求相邻级不重叠，以相邻最大/最小中点确定15个判决阈值，再校验完整2,065,686像素，符号错误必须0。阈值及接收ROI只保存在接收端会话结果；`calibration.receive_wire`应用这些参数恢复相同物理映射的v1/v2 wire；connect业务接收使用此接口。
+每个候选在`apply_display_mode`作用域内维持到会话结束。采集调用`refresh_capture`重开，尺寸不符或黑帧不能提交；在`signal_lock_seconds`（默认25秒）内持续尝试标定并重开采集；即使采集尺寸不符，也继续尝试解读控制图，使回退SELECT仍可到达。候选失败通过STATUS传播，协调端只增加失败方向索引、增加r，重新SELECT；旧r的STATUS不生效。共同候选耗尽或总运行时间耗尽则失败，保留证据并恢复原显示。启动阶段发现新UUID要求重新启动连接；业务阶段沿用已有同模式重启机制。
 
-REPORT的sequence固定3；body为`profile,orientation,dx,dy,pixels,symbol_errors`，profile=`v1-gray16`、orientation为normal/flip_vertical、dx范围0..2、dy范围0..3（确保完整源ROI不裁切）、pixels=2065686、symbol_errors=0。ack初始0，收到对端REPORT后置3；重复REPORT必须内容相同。接收方本地标定成功、收到对端成功REPORT且收到ack=3后，`calibrated=true`。底层发现状态仍为capabilities，标定进度通过这些显式字段表示。REPORT在全部阶段持续重复，以恢复丢失；对端启动UUID变化后，报告和确认状态全部清空。
+标定图使用发送方UUID转成整数作为NumPy default_rng种子。模式应用后每三个0.6秒时隙显示一次标定，其余轮询控制。接收器仅从视频身份和选定参数生成目标。成功后测量当前tx编码、rx完整处理及实际软件采样间隔；不代表HDMI时间戳或持续吞吐。两端STATUS均成功后进入REPORT，先完成的一端继续重复终态STATUS，允许另一端从丢失中恢复。CAPS不因测量改变。
+
+接收器在两个行序、±8整数像素偏移范围内按稀疏样本相关系数搜索。最佳系数至少0.995，与次佳相差至少0.05；仅接受完整保留v1源ROI的映射。学习16级灰度实际最小/最大/均值，要求相邻级不重叠，以相邻最大/最小中点确定15个判决阈值，再校验所选有效区全部像素（1080p为2,065,686；1200p为2,295,846），符号错误必须0。阈值及接收ROI只保存在接收端会话结果；`calibration.receive_wire`应用这些参数恢复相同物理映射的v1/v2 wire；connect业务接收使用此接口。
+
+REPORT的sequence固定3；body为`profile,orientation,dx,dy,pixels,symbol_errors`，profile=`v1-gray16`、orientation为normal/flip_vertical、dx范围0..2、dy范围0..3（确保完整源ROI不裁切）、pixels等于报告接收端所测方向的有效像素数、symbol_errors=0。ack初始0，收到对端REPORT后置3；重复REPORT必须内容相同。接收方本地标定成功、收到对端成功REPORT且收到ack=3后，`calibrated=true`。底层发现状态仍为capabilities，标定进度通过这些显式字段表示。REPORT在全部阶段持续重复，以恢复丢失；对端启动UUID变化后，报告和确认状态全部清空。
 
 connect在双向标定完成后继续配置提交；完成状态要求配置ready、本端已开始接收的文件完整且FINISH已被确认，以及可选发送文件收到对端FINISH。就绪前继续发送标定和控制图，就绪后保持控制图与可选业务图的调度。
 
@@ -74,7 +78,9 @@ connect在双向标定完成后继续配置提交；完成状态要求配置read
 
 `connect`使用下列流程。`bootstrap`仍只交换HELLO/CAPS。标定REPORT的profile仍为`v1-gray16`，表示同一物理像素档位；CAPS versions包含2才允许协商带身份的数据头。
 
-两个端点按UUID排序。配置1用于较小UUID→较大UUID，配置2用于相反方向；配置ID仅在本次会话有效。提议body固定为`{"directions":[[1,"v1-gray16",fps,window],[2,"v1-gray16",fps,window]]}`。每行分别表示配置ID、物理档位、最大发送帧率、接收窗口上限。两个方向独立计算：fps不超过2，亦不超过发端编码耗时、收端解码耗时和采集间隔各乘2所得周期的倒数；窗口取该方向接收端CAPS上限。短时测量只用于保守初始上限，不是持续性能或动态调节结论。当前发送间隔不短于1/fps；默认业务图保持0.75/fps秒，控制图保持0.25秒。控制机会优先轮询ACK/FINISH，每4秒保留HELLO用于重启发现。窗口作为首次发送额度，后续由ACK更新，实际执行见可靠传输小节。
+两个端点按UUID排序，方向index=0表示较小UUID→较大UUID，index=1为反向。配置行格式为`[config_id,"v1-gray16",fps,window,mode_id,width,height,layout]`，body=`{"directions":[方向0行,方向1行]}`。`mode_id`为`gray16-1920x1080-l1`或`gray16-1920x1200-l1`，layout固定1。配置ID=`1+index+2*(height==1200)`，即1080p为1/2，1200p为3/4；与当前会话共同标识业务几何。校验者要求宽高、模式标识、布局、配置ID全部匹配本轮已验证结果。
+
+两个方向独立计算fps：不超过2，亦不超过发端编码耗时、收端解码耗时和采集间隔各乘2所得周期的倒数；窗口取该方向接收端CAPS上限。测量来自本轮STATUS并保存为会话`directional_timings`。发送间隔不短于1/fps；默认业务图保持0.75/fps秒，控制图保持0.25秒。控制机会优先轮询ACK/FINISH，每4秒保留HELLO。窗口作为首次发送额度，后续由ACK更新。
 
 所有配置消息携带相同的完整body；序号/ack固定如下，同一会话不允许更改配置：
 

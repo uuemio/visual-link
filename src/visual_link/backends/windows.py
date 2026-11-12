@@ -8,6 +8,7 @@ import numpy as np
 
 from .camera import capture_one
 from ..core.image import image_parameters
+from ..presentation import display_parameters
 
 
 def _api():
@@ -75,7 +76,7 @@ def monitors():
 @contextmanager
 def desktop_mode(config):
     """Optionally switch the selected output to 1080p, restoring its original mode."""
-    parameters = image_parameters(config, 'tx')
+    parameters = display_parameters(config)
     width, height = parameters.width, parameters.height
     ct, _, api, _, mode_type = _api()
     rows = monitors()
@@ -115,7 +116,7 @@ def desktop_mode(config):
 
 def display_one(config, image, seconds, ready=None, advance=None):
     """Hold a borderless native-size PNG on the selected interactive monitor."""
-    parameters = image_parameters(config, 'tx')
+    parameters = display_parameters(config)
     width, height = parameters.width, parameters.height
     if image.dtype != np.uint8 or image.shape not in (parameters.shape, (*parameters.shape, 3)):
         raise ValueError(f'display requires native {width}x{height} uint8 gray or BGR')
@@ -184,6 +185,10 @@ def display_one(config, image, seconds, ready=None, advance=None):
                 if state['start'] is not None and advance is not None:
                     try:
                         next_image = advance()
+                        from ..presentation import END_PRESENTATION
+                        if next_image is END_PRESENTATION:
+                            window.quit()
+                            return
                         if next_image is not None:
                             if next_image.dtype != np.uint8 or next_image.shape not in (parameters.shape, (*parameters.shape, 3)):
                                 raise ValueError(f'display requires native {width}x{height} pixels')

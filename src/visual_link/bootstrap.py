@@ -11,7 +11,7 @@ from .core.control import decode, encode
 from .hardware import save_json
 from .session import Session, State, Capabilities, CalibrationSession, NegotiationSession
 from . import calibration
-from .core.image import DEFAULT_IMAGE, image_parameters
+from .core.image import image_parameters
 
 
 def _archive(source, destination):
@@ -29,7 +29,9 @@ def _receive(config, directory, messages, stop, heartbeat):
                  control_decode_seconds=0.0, data_decode_seconds=0.0)
     metadata = dict(receive_stats=stats)
     saved = set()
-    peer = target = measured = None
+    peer = config.get('_initial_peer')
+    target = None if peer is None else calibration.pattern(int(peer, 16), parameters)
+    measured = None if '_initial_calibration' not in config else dict(sender=peer, calibration=config['_initial_calibration'])
     captured_times = []
     previous = None
     control_image = control_message = None
@@ -147,7 +149,7 @@ def _receive(config, directory, messages, stop, heartbeat):
         messages.close()
 
 
-def exchange(config, directory, seconds, display=None, receive_target=_receive, calibrate=False, negotiate=False, input_file=None):
+def _exchange(config, directory, seconds, display=None, receive_target=_receive, calibrate=False, negotiate=False, input_file=None, session=None, startup_result=None):
     """Exchange video control and bounded business presentations until exit."""
     if display is None:
         if config['backend'] == 'windows':
@@ -158,9 +160,6 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
             raise ValueError('bootstrap requires a platform backend')
     tx_parameters = image_parameters(config, 'tx')
     rx_parameters = image_parameters(config, 'rx')
-    # Mode identity is added to negotiation in step 3; never label 1200p as 1080p.
-    if negotiate and (tx_parameters != DEFAULT_IMAGE or rx_parameters != DEFAULT_IMAGE):
-        raise ValueError('connect mode negotiation currently requires 1080p; use explicit codec interfaces for other modes')
     directory = Path(directory)
     ctx = mp.get_context('spawn')
     messages, stop = ctx.Queue(maxsize=8), ctx.Event()
@@ -170,7 +169,8 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
     worker = ctx.Process(target=receive_target, args=(config, str(directory), messages, stop, heartbeat))
     if negotiate and not calibrate:
         raise ValueError('negotiation requires calibration')
-    session = NegotiationSession() if negotiate else CalibrationSession() if calibrate else Session()
+    supplied_session = session is not None
+    session = session or (NegotiationSession() if negotiate else CalibrationSession() if calibrate else Session())
     from .core.storage import DiskReassembler, FileSource
     from .core.protocol import encode_frame
     from .transport import Sender, Transport
@@ -202,6 +202,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
         progress_at = now
         value = dict(state=session.state.value, phase=getattr(session, 'phase', None),
                      connection_ready=getattr(session, 'ready', False),
+                     modes=startup_result, configurations=getattr(session, 'proposal', None),
                      send_count=0 if payload is None else payload.count,
                      received_count=len(receiver.frames),
                      receive_count=None if receiver.first is None else receiver.first['count'],
@@ -372,6 +373,8 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                 last = time.monotonic()
                 return target_image
         outgoing = session.outgoing()
+        if hasattr(session, 'startup_message') and not session.ready:
+            outgoing.append(session.startup_message)
         if ready:
             hold_seconds = config.get('control_hold_seconds', 0.25)
             if time.monotonic()-last_hello >= 4:
@@ -409,8 +412,11 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                 raise ValueError('device probe failed or timed out; see device.json') from exc
             save_json(directory/'probe.json', dict(display=observed_display, **probe,
                       scope='selected native mode; four warmed capture frames; encode and local BGR/control-search/calibrated-mapping/RS receive path'))
-            session.capabilities = Capabilities(versions=(1,2) if negotiate else (1,),
-                      receive_window=config.get('receive_window', 1), measured_ms=tuple(probe['measured_ms']))
+            if not supplied_session:
+                session.capabilities = Capabilities(versions=(1,2) if negotiate else (1,),
+                          modes=((tx_parameters.width, tx_parameters.height),),
+                          rx_modes=((rx_parameters.width, rx_parameters.height),),
+                          receive_window=config.get('receive_window', 1), measured_ms=tuple(probe['measured_ms']))
             from .backends.image_sequence import write
             target_image = calibration.pattern(int(session.local_id,16), tx_parameters)
             write(directory/'calibration-target.png', target_image)
@@ -458,7 +464,7 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                       peer_id=session.peer_id, session_id=session.session_id,
                       coordinator=session.coordinator,
                       phase=getattr(session, 'phase', None),
-                      configurations=getattr(session, 'proposal', None), received=received,
+                      configurations=getattr(session, 'proposal', None), modes=startup_result, received=received,
                       connection_ready=getattr(session, 'ready', False),
                       send_ready=getattr(session, 'can_send', False),
                       receive_complete=received is not None,
@@ -472,3 +478,25 @@ def exchange(config, directory, seconds, display=None, receive_target=_receive, 
                       peer_capabilities=None if session.peer_capabilities is None else asdict(session.peer_capabilities)))
     return dict(status='complete', session_id=session.session_id, state=session.state.value,
                 calibrated=getattr(session, 'calibrated', False), ready=getattr(session, 'ready', False))
+
+
+def exchange(config, directory, seconds, display=None, receive_target=_receive, calibrate=False, negotiate=False, input_file=None):
+    if not negotiate:
+        return _exchange(config, directory, seconds, display, receive_target, calibrate, negotiate, input_file)
+    if not calibrate:
+        raise ValueError('negotiation requires calibration')
+    if display is None:
+        if config['backend'] == 'windows':
+            from .backends.windows import display_one as display
+        elif config['backend'] == 'linux':
+            from .backends.linux import display_one as display
+        else:
+            raise ValueError('bootstrap requires a platform backend')
+    from .automatic import startup
+    began = time.monotonic()
+    with startup(config, directory, seconds, display) as (selected, session, modes):
+        remaining = seconds - (time.monotonic()-began)
+        if remaining <= 0:
+            raise ValueError('startup exhausted connection duration')
+        return _exchange(selected, directory, remaining, display, receive_target, True, True,
+                         input_file, session=session, startup_result=modes)

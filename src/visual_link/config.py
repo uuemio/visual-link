@@ -34,6 +34,19 @@ def load(path):
         value = c['send_fps_limit']
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
             raise ValueError('send_fps_limit must be finite and positive')
+    if 'candidate_modes' in c:
+        modes = c['candidate_modes']
+        if not isinstance(modes, list) or not modes:
+            raise ValueError('candidate_modes must be a nonempty list')
+        from .core.image import ImageParameters
+        for mode in modes:
+            if not isinstance(mode, list) or len(mode) != 2:
+                raise ValueError('invalid candidate mode')
+            ImageParameters(*mode)
+    if 'signal_lock_seconds' in c:
+        value = c['signal_lock_seconds']
+        if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            raise ValueError('signal_lock_seconds must be positive')
     faults = c.get('test_faults', {})
     if (not isinstance(faults, dict) or set(faults)-{'drop_data_once','drop_control_once'}
             or not isinstance(faults.get('drop_data_once', []), list)

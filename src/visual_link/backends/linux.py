@@ -4,11 +4,12 @@ import time
 
 import numpy as np
 from ..core.image import image_parameters
+from ..presentation import display_parameters
 
 
 def display_one(config, image, seconds, ready=None, advance=None):
     """Hold a single image at 1:1 pixels, restore the window on exit."""
-    parameters = image_parameters(config, 'tx')
+    parameters = display_parameters(config)
     width, height = parameters.width, parameters.height
     if not sys.platform.startswith('linux'):
         raise ValueError('GTK display requires Linux')
@@ -85,6 +86,10 @@ def display_one(config, image, seconds, ready=None, advance=None):
         if state['start'] is not None and advance is not None:
             try:
                 next_image = advance()
+                from ..presentation import END_PRESENTATION
+                if next_image is END_PRESENTATION:
+                    Gtk.main_quit()
+                    return False
                 if next_image is not None:
                     picture.set_from_pixbuf(make_pixbuf(next_image))
             except Exception as exc:

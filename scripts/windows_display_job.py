@@ -27,7 +27,7 @@ def main():
         with ExitStack() as guards:
             if mode == 'apply-mode':
                 report['mode'] = guards.enter_context(apply_display_mode(config))
-            elif mode != 'capabilities':
+            elif mode not in ('capabilities', 'connect'):
                 display_mode = guards.enter_context(desktop_mode(config))
                 report['mode'] = display_mode
                 report['timing'] = guards.enter_context(identity_signal(

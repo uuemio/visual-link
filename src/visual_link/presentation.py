@@ -79,3 +79,20 @@ class Presentation:
     def close(self):
         self.stop.set()
         self.thread.join(timeout=1)
+
+
+# A GUI callback may finish one native canvas before the next mode is applied.
+END_PRESENTATION = object()
+
+
+def display_parameters(config):
+    """Control canvases may use the current desktop before a codec mode is selected."""
+    from types import SimpleNamespace
+    from .core.image import image_parameters
+    canvas = config.get('_control_canvas')
+    if canvas is None:
+        return image_parameters(config, 'tx')
+    width, height = canvas['width'], canvas['height']
+    if any(type(v) is not int or v < 384 or v > 16384 for v in (width, height)):
+        raise ValueError('unsupported bootstrap canvas')
+    return SimpleNamespace(width=width, height=height, shape=(height, width))

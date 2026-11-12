@@ -9,14 +9,21 @@ from .core.control import Message, identifier
 
 @dataclass(frozen=True)
 class Capabilities:
-    # These are software-supported modes, not an assertion of device support.
+    # connect populates directional modes from selected device declarations.
     versions: tuple = (1,)
     profiles: tuple = ('v1-gray16',)
     modes: tuple = ((1920, 1080),)
+    rx_modes: tuple = ((1920, 1080),)
+    layout: int = 1
     receive_window: int = 1
     measured_ms: tuple = ()
 
     def __post_init__(self):
+        from .core.image import ImageParameters
+        if type(self.layout) is not int or self.layout != 1 or not self.rx_modes:
+            raise ValueError('unsupported layout or empty capture modes')
+        for mode in self.modes + self.rx_modes:
+            ImageParameters(*mode)
         if len(self.measured_ms) not in (0,3) or any(type(x) not in (int,float) or not math.isfinite(x) or x <= 0 for x in self.measured_ms):
             raise ValueError('invalid performance measurements')
         if (not self.versions or any(type(v) is not int or v < 1 for v in self.versions)
@@ -28,10 +35,12 @@ class Capabilities:
     @classmethod
     def parse(cls, body):
         try:
-            if set(body) not in ({'versions', 'profiles', 'modes', 'receive_window'}, {'versions', 'profiles', 'modes', 'receive_window', 'measured_ms'}):
-                raise ValueError('unknown or missing capability fields')
-            return cls(tuple(body['versions']), tuple(body['profiles']),
-                       tuple(tuple(m) for m in body['modes']), body['receive_window'], tuple(body.get('measured_ms', ())))
+            if set(body) - {'versions', 'profiles', 'modes', 'rx_modes', 'layout', 'receive_window', 'measured_ms'}:
+                raise ValueError('unknown capability fields')
+            return cls(versions=tuple(body['versions']), profiles=tuple(body['profiles']),
+                       modes=tuple(tuple(m) for m in body['modes']),
+                       rx_modes=tuple(tuple(m) for m in body['rx_modes']), layout=body['layout'],
+                       receive_window=body['receive_window'], measured_ms=tuple(body.get('measured_ms', ())))
         except (TypeError, KeyError) as exc:
             raise ValueError('invalid capabilities') from exc
 
@@ -98,7 +107,8 @@ class Session:
             self.peer_confirmed |= message.ack == 2
             if (not set(caps.versions).intersection(self.capabilities.versions)
                     or not set(caps.profiles).intersection(self.capabilities.profiles)
-                    or not set(caps.modes).intersection(self.capabilities.modes)):
+                    or not set(caps.modes).intersection(self.capabilities.rx_modes)
+                    or not set(caps.rx_modes).intersection(self.capabilities.modes)):
                 self.state = State.INCOMPATIBLE
             elif self.peer_confirmed:
                 self.state = State.CAPABILITIES
@@ -111,6 +121,12 @@ class CalibrationSession(Session):
         self.local_calibration = None
         self.peer_report = None
         self.report_confirmed = False
+
+    def report_pixels(self):
+        from .core.image import ImageParameters
+        modes = getattr(self, 'selected_modes', None)
+        mode = modes[0 if self.coordinator else 1] if modes else self.capabilities.modes[0]
+        return ImageParameters(*mode).pixels
 
     @property
     def calibrated(self):
@@ -146,7 +162,7 @@ class CalibrationSession(Session):
                     or body['profile'] != 'v1-gray16' or body['orientation'] not in ('normal','flip_vertical')
                     or any(type(body[k]) is not int for k in ('dx','dy','pixels','symbol_errors'))
                     or not 0 <= body['dx'] <= 2 or not 0 <= body['dy'] <= 3
-                    or body['pixels'] != 2065686 or body['symbol_errors'] != 0):
+                    or body['pixels'] != self.report_pixels() or body['symbol_errors'] != 0):
                 raise ValueError('invalid calibration REPORT')
             if self.peer_report is not None and self.peer_report != body:
                 raise ValueError('calibration REPORT changed within a session')
@@ -158,10 +174,11 @@ class NegotiationSession(CalibrationSession):
     """One committed pair of directional configurations per discovered session.
 
     Repeating the last transition heals loss; earlier messages never regress it.
-    Configuration IDs 1/2 mean sorted endpoint 0->1 / 1->0 respectively.
+    IDs 1/2 identify 1080p directions; 3/4 identify 1200p directions.
     """
     def __init__(self, capabilities=None, local_id=None):
         super().__init__(capabilities or Capabilities(versions=(1, 2)), local_id)
+        self.selected_modes = None
         self.proposal = None
         self.phase = 'calibrating'
         self.peer_ready = False
@@ -191,11 +208,20 @@ class NegotiationSession(CalibrationSession):
         for index, (tx, rx) in enumerate((caps, caps[::-1])):
             # Conservative independent limits; this is not a running controller.
             costs = [0.5]  # The current pixel profile is limited to 2 FPS.
-            if tx.measured_ms:
-                costs.append(tx.measured_ms[0]*2/1000)
-            if rx.measured_ms:
-                costs.extend((rx.measured_ms[1]*2/1000, rx.measured_ms[2]*2/1000))
-            directions.append([index+1, 'v1-gray16', round(1/max(costs), 3), rx.receive_window])
+            timings = getattr(self, 'directional_timings', (caps[0].measured_ms, caps[1].measured_ms))
+            tx_ms, rx_ms = timings if index == 0 else timings[::-1]
+            if tx_ms:
+                costs.append(tx_ms[0]*2/1000)
+            if rx_ms:
+                costs.extend((rx_ms[1]*2/1000, rx_ms[2]*2/1000))
+            candidates = common_modes(tx, rx)
+            mode = candidates[0] if self.selected_modes is None else self.selected_modes[index]
+            if mode not in candidates:
+                raise ValueError('selected mode not shared by directional devices')
+            mode_id = 'gray16-%dx%d-l1' % mode
+            config_id = 1 + index + 2 * (mode[1] == 1200)
+            directions.append([config_id, 'v1-gray16', round(1/max(costs), 3), rx.receive_window,
+                               mode_id, *mode, 1])
         return dict(directions=directions)
 
     def _validate(self, body):
@@ -205,11 +231,11 @@ class NegotiationSession(CalibrationSession):
             raise ValueError('v2 data identity required')
         limits = self._candidate()['directions']
         for row, limit in zip(body['directions'], limits):
-            if (not isinstance(row, list) or len(row) != 4 or type(row[0]) is not int or row[:2] != limit[:2]
+            if (not isinstance(row, list) or len(row) != 8 or type(row[0]) is not int or row[:2] != limit[:2] or row[4:] != limit[4:]
+                    or any(type(value) is not int for value in row[5:])
                     or type(row[2]) not in (int, float) or not math.isfinite(row[2]) or not 0 < row[2] <= limit[2]
                     or type(row[3]) is not int or not 1 <= row[3] <= limit[3]
-                    or row[1] not in self.capabilities.profiles or row[1] not in self.peer_capabilities.profiles
-                    or (1920,1080) not in self.capabilities.modes or (1920,1080) not in self.peer_capabilities.modes):
+                    or row[1] not in self.capabilities.profiles or row[1] not in self.peer_capabilities.profiles):
                 raise ValueError('unsupported directional configuration')
 
     def outgoing(self):
@@ -267,3 +293,8 @@ class NegotiationSession(CalibrationSession):
                 or metadata.get('config_id') != config[0]
                 or metadata.get('file_id') != metadata['file_sha256'][:24]):
             raise ValueError('data does not belong to ready receive configuration')
+
+
+def common_modes(tx, rx):
+    """Largest first, for one sender display and the opposite capture device."""
+    return sorted(set(tx.modes).intersection(rx.rx_modes), key=lambda m: (m[0]*m[1], m), reverse=True)
