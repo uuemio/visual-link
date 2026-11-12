@@ -1,30 +1,44 @@
 # 安装与部署
 
-日常操作见[使用说明](../使用说明.md)，首次安装见[README](../README.md#安装)。
+将完整项目复制或克隆到两台设备，各自在项目目录执行安装。虚拟环境在目标设备创建。
 
-## 运行环境
+## Windows
 
-- Windows：项目目录中的`.venv-win`，页面通过`scripts/windows_interactive.ps1`在已登录桌面启动传输。
-- 树莓派：`~/visual-link`，使用`.venv-hardware`和真实桌面环境；GTK/PyGObject准备见[硬件说明](HARDWARE.md)。
+安装 Python 3.10 及以上版本，包含 Tcl/Tk 组件。在 PowerShell 执行：
 
-两端分别使用`configs/windows-recommended.json`和`configs/pi-recommended.json`。
-
-## 更新树莓派程序
-
-在本项目目录执行，将用户名和地址替换为实际值：
-
-```bash
-bash scripts/deploy.sh 用户名@树莓派地址
+```powershell
+py -3 -m venv .venv-win
+.venv-win\Scripts\python.exe -m pip install -e .
+.venv-win\Scripts\python.exe -m visual_link.web
 ```
 
-首次使用SSH连接前，核对树莓派提供的主机指纹。部署脚本只复制源码、推荐配置、启动脚本、安装声明和使用文档，不复制运行环境或本地测试文件。解压更新不会删除远端已有文件。
+## Linux
 
-Windows使用本机项目目录；使用共享文件夹时直接读取共享目录中的源码。更新后重启页面服务，再从本机浏览器打开 http://127.0.0.1:8765 。
-
-## 回收运行结果
+使用 X11 桌面，或支持 `wlr-randr` 输出管理协议的 Wayland 桌面。Ubuntu/Debian 的 X11 环境安装命令：
 
 ```bash
-bash scripts/collect.sh 用户名@树莓派地址 runs/pi-collected-新编号
+sudo apt-get install python3-venv python3-gi gir1.2-gtk-3.0 v4l-utils x11-xserver-utils
+python3 -m venv --system-site-packages .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m visual_link.web
 ```
 
-该命令将远端`runs/`复制到新的本地目录。管理网络仅用于部署和结果回收；文件传输及ACK/FINISH通过HDMI/USB链路完成。
+Wayland 桌面另安装 `wlr-randr`。其他 Linux 发行版安装对应系统包。运行用户需具备 `/dev/video*` 采集设备访问权限。
+
+## 配置与启动
+
+Windows 使用 `configs/windows-recommended.json`；Linux 使用 `configs/pi-recommended.json`，其中 `pi` 是配置文件名，后端为通用 Linux。
+
+按[硬件准备](HARDWARE.md)设置设备和显示器编号。在已登录的图形桌面启动，两端分别打开 http://127.0.0.1:8765 。更换端口使用 `--port 8766`。
+
+## 更新
+
+两端更新到相同版本，重新执行各自的 `python -m pip install -e .`，然后重启页面服务。
+
+也可从 Bash 使用 SSH 部署到 Linux 用户主目录下的 `visual-link/`：
+
+```bash
+bash scripts/deploy.sh 用户名@主机地址
+```
+
+部署后在目标设备执行安装命令。会话输出使用本地支持硬链接的文件系统，例如 NTFS 或 ext4。源码更新与接收文件分别管理。

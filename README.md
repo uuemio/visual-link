@@ -1,62 +1,42 @@
 # Visual Link
 
-Windows与树莓派通过两条HDMI/USB视觉链路互传文件，支持中文本机操作页面、自动标定、分片确认、重传及完整文件交付确认。
+通过双向 HDMI/USB 视频链路传输文件的软件，提供中文浏览器操作页面。两端可同时发送，程序自动协商分辨率、标定图像、确认分片并校验完整文件。
 
-**开始使用：[中文使用说明](使用说明.md)**
+## 支持范围
 
-## 启动页面
+- Windows：Python 3.10 及以上，使用 DirectShow 采集、Tkinter 显示。
+- Linux：Python 3.10 及以上，使用 V4L2 采集、GTK 3 显示；桌面使用 X11，或支持 `wlr-randr` 的 Wayland 合成器。
+- 视频模式：1920×1080、1920×1200；两个传输方向可使用不同分辨率。
+- 每端具有 HDMI 输出及 USB 采集卡，显示输出与采集卡提供所用分辨率，采集支持 BGR3/RGB24 原生格式。
 
-在各自已登录的桌面上，从项目目录运行：
+## 开始使用
 
-Windows（PowerShell）：
+1. 按[安装与部署](docs/DEPLOYMENT.md)安装两端程序。
+2. 按[硬件准备](docs/HARDWARE.md)连接两条视频链路并选择设备。
+3. 启动页面，打开 **http://127.0.0.1:8765**，按[使用说明](使用说明.md)传输文件。
+
+Windows（PowerShell，在项目目录运行）：
 
 ```powershell
 .venv-win\Scripts\python.exe -m visual_link.web
 ```
 
-树莓派（桌面终端）：
+Linux（图形桌面终端，在项目目录运行）：
 
 ```bash
-.venv-hardware/bin/python -m visual_link.web
+.venv/bin/python -m visual_link.web
 ```
 
-两端分别打开 **http://127.0.0.1:8765**。页面中的文件路径和输出目录均为当前主机的本地路径。输入文件留空表示仅接收；两端仍通过视频链路交换连接信息和确认消息。
+## 项目内容
 
-## 多分辨率交付
+| 目录 | 内容 |
+|---|---|
+| `src/visual_link/` | 页面、传输协议和平台适配 |
+| `configs/` | 设备配置示例 |
+| `scripts/` | Windows 桌面启动和远程部署工具 |
+| `docs/` | 安装、硬件和协议说明 |
+| `tests/` | 开发维护用回归用例 |
 
-两端启动后自动交换设备能力，默认保留当前1080p/1200p输出，分别协商两个方向，完成模式应用、实际采集验证和标定后传文件；启动计时与传输阶段计时独立。页面显示启动协商、双向分辨率、实际采集模式及交付进度；推荐配置只保留设备选择和候选模式。
+会话文件在运行时生成于 `runs/`，与源码分开存放。
 
-[四步完成状态](docs/交接/当前进度.md) · [步骤4交付与验收](docs/交接/04-交付.md) · [开发计划](docs/开发计划.md)
-
-## 安装
-
-需要Python 3.10或更新版本。当前设备已有运行环境，无需重复安装。
-
-Windows：
-
-```powershell
-py -3 -m venv --copies .venv-win
-.venv-win\Scripts\python.exe -m pip install -e .
-```
-
-树莓派：
-
-```bash
-python3 -m venv --copies .venv-hardware
-.venv-hardware/bin/python -m pip install -e .
-```
-
-树莓派显示还需要系统GTK/PyGObject，首次配置见[硬件与桌面准备](docs/HARDWARE.md)。Python依赖版本在`pyproject.toml`中固定。
-
-## 目录
-
-- `src/visual_link/`：页面、通信协议、文件存储和平台设备代码。
-- `configs/`：Windows及Pi推荐配置。
-- `scripts/`：Windows桌面启动、部署及结果回收。
-- `docs/`：硬件准备、部署、运行原理和协议说明。
-- `runs/`：本地运行输出；保存分步实机验证及页面交付证据，入口见交接文档。
-- `bear.jpg`：最近一次发送测试的原文件，保留在本地。
-
-程序源码、推荐配置和使用文档纳入Git；运行环境、测试原文件和运行输出保留在本地。回归测试位于`tests/`；各步证据路径与验证范围见`docs/交接/`。
-
-[运行原理](docs/运行原理.md) · [协议](docs/PROTOCOL.md) · [部署与回收](docs/DEPLOYMENT.md)
+[运行原理](docs/运行原理.md) · [协议格式](docs/PROTOCOL.md)

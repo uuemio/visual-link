@@ -2,9 +2,9 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
+dist/
 runs/
 *.bin
 *.part
 .local/
-
-/bear.jpg
