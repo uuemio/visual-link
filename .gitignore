@@ -1,10 +1,47 @@
+# Local agent instructions and configuration
+AGENT.md
+AGENTS.md
+.agents/
+.codex/
+.claude/
+
+# Python environments, builds and caches
 .venv*/
+/venv/
+/env/
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local settings and credentials
+.local/
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+
+# Runtime outputs and temporary files
 runs/
 *.bin
 *.part
-.local/
+*.log
+/.tmp/
+/tmp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
