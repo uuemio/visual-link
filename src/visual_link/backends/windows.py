@@ -209,3 +209,82 @@ def display_one(config, image, seconds, ready=None, advance=None):
             window.destroy()
     report['original_mode_restored'] = True
     return report
+
+
+def display_capabilities(config):
+    """Read selected EnumDisplaySettings modes and actual QueryDisplayConfig timing."""
+    ct, _, api, _, mode_type = _api()
+    rows = monitors()
+    if config['monitor'] >= len(rows):
+        raise ValueError('monitor index out of range')
+    selected = rows[config['monitor']]
+    if selected['device'] == 'WinDisc':
+        raise ValueError('mode discovery requires the logged-in interactive desktop')
+    modes, index = [], 0
+    while True:
+        mode = mode_type(); mode.dmSize = ct.sizeof(mode)
+        if not api.EnumDisplaySettingsW(selected['device'], index, ct.byref(mode)):
+            break
+        row = dict(width=mode.dmPelsWidth, height=mode.dmPelsHeight,
+                   refresh_hz=mode.dmDisplayFrequency, bits_per_pixel=mode.dmBitsPerPel,
+                   interlaced=bool(mode.dmDisplayFlags & 2))
+        if row not in modes:
+            modes.append(row)
+        index += 1
+    from .windows_signal import signals
+    signal = next(s for s in signals() if s['device'] == selected['device'])
+    return dict(api='EnumDisplaySettings/QueryDisplayConfig', device=selected['device'],
+                monitor=config['monitor'], declared=modes, selected=selected,
+                current_output=dict(width=selected['width'], height=selected['height'],
+                                    refresh_hz=signal['refresh'][0] / signal['refresh'][1], signal=signal))
+
+
+@contextmanager
+def apply_mode(config, width, height, refresh_hz=None):
+    """Apply an enumerated desktop mode, verify physical identity, restore exact timing."""
+    from .windows_signal import _configuration, identity_signal
+    from ..core.image import ImageParameters
+    before = display_capabilities(config)
+    matches = [m for m in before['declared'] if (m['width'], m['height']) == (width, height)
+               and m['bits_per_pixel'] == 32 and not m['interlaced']
+               and (refresh_hz is None or abs(m['refresh_hz'] - refresh_hz) < 0.1)]
+    if not matches:
+        raise ValueError('selected display does not declare requested progressive 32-bit mode')
+    chosen = min(matches, key=lambda m: abs(m['refresh_hz'] - (refresh_hz or 60)))
+    ct, _, api, _, mode_type = _api()
+    original = mode_type(); original.dmSize = ct.sizeof(original)
+    if not api.EnumDisplaySettingsW(before['device'], 0xffffffff, ct.byref(original)):
+        raise ValueError('cannot read original display mode')
+    _, signal_api, saved_paths, saved_modes, _ = _configuration()
+    changed = (original.dmPelsWidth, original.dmPelsHeight, original.dmDisplayFrequency) != (
+        width, height, chosen['refresh_hz'])
+    attempted = False
+    try:
+        if changed:
+            requested = mode_type.from_buffer_copy(original)
+            requested.dmPelsWidth, requested.dmPelsHeight = width, height
+            requested.dmDisplayFrequency = chosen['refresh_hz']
+            requested.dmFields = 0x80000 | 0x100000 | 0x400000
+            if api.ChangeDisplaySettingsExW(before['device'], ct.byref(requested), None, 2, None):
+                raise ValueError('display driver rejected requested mode test')
+            attempted = True
+            if api.ChangeDisplaySettingsExW(before['device'], ct.byref(requested), None, 4, None):
+                raise ValueError('display driver rejected mode application')
+        with identity_signal(before['device'], allow_change=True,
+                             parameters=ImageParameters(width=width, height=height)):
+            after = display_capabilities(config)
+            if (after['current_output']['width'], after['current_output']['height']) != (width, height):
+                raise ValueError('desktop geometry differs from requested mode')
+            if abs(after['current_output']['refresh_hz'] - chosen['refresh_hz']) > 1.1:
+                raise ValueError('actual HDMI refresh differs from requested mode')
+            yield dict(api=after['api'], device=before['device'], before=before['current_output'],
+                       current_output=after['current_output'], changed=changed)
+    finally:
+        if attempted:
+            # Restore desktop first, then the complete original physical path timings.
+            rc = api.ChangeDisplaySettingsExW(before['device'], ct.byref(original), None, 4, None)
+            signal_api.SetDisplayConfig.argtypes = [ct.c_uint32, ct.c_void_p, ct.c_uint32, ct.c_void_p, ct.c_uint32]
+            signal_api.SetDisplayConfig.restype = ct.c_int32
+            timing_rc = signal_api.SetDisplayConfig(len(saved_paths), saved_paths, len(saved_modes), saved_modes, 0x4a0)
+            if rc or timing_rc:
+                raise ValueError(f'failed to restore Windows display: desktop={rc}, timing={timing_rc}')

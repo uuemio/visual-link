@@ -3,7 +3,7 @@ param(
     [string]$InputImage,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [double]$Seconds = 30,
-    [ValidateSet('display', 'display-stream', 'bootstrap', 'connect')][string]$Mode = 'display',
+    [ValidateSet('display', 'display-stream', 'bootstrap', 'connect', 'capabilities', 'apply-mode')][string]$Mode = 'display',
     [string]$Python = '.venv-win\Scripts\python.exe'
 )
 $ErrorActionPreference = 'Stop'
@@ -20,7 +20,7 @@ $jobFile = "$output-job.json"
 if (Test-Path $jobFile) { throw 'Job already exists' }
 $job = @{
  config = (Resolve-Path $Config).Path
- input = $(if ($Mode -eq 'bootstrap' -or ($Mode -eq 'connect' -and -not $InputImage)) { $null } else { (Resolve-Path $InputImage).Path })
+ input = $(if ($Mode -eq 'bootstrap' -or $Mode -eq 'capabilities' -or (($Mode -eq 'connect' -or $Mode -eq 'apply-mode') -and -not $InputImage)) { $null } else { (Resolve-Path $InputImage).Path })
  output = $output
  seconds = $Seconds
  mode = $Mode

@@ -7,7 +7,7 @@ import numpy as np
 from ..core.image import image_parameters
 
 
-def capture_frames(config, metadata, stopped=lambda: False):
+def capture_frames(config, metadata, stopped=lambda: False, strict=True):
     """Yield continuous native BGR pixels using one negotiated device handle."""
     parameters = image_parameters(config, 'rx')
     width, height = parameters.width, parameters.height
@@ -43,10 +43,11 @@ def capture_frames(config, metadata, stopped=lambda: False):
             fps=camera.get(cv2.CAP_PROP_FPS), convert_rgb=camera.get(cv2.CAP_PROP_CONVERT_RGB))
         if value != requested_format:
             raise ValueError(f'driver format {value:#x} ({fourcc!r}) differs from {format_name}; no format fallback')
-        if (metadata['reported']['width'], metadata['reported']['height']) != (width, height):
+        if strict and (metadata['reported']['width'], metadata['reported']['height']) != (width, height):
             raise ValueError(f'driver did not negotiate native {width}x{height}')
         deadline = time.monotonic() + config['timeout']
         valid = 0
+        sampling_start = time.monotonic()
         while not stopped():
             if valid <= 5 and time.monotonic() >= deadline:
                 raise ValueError('no valid frame after warmup; check HDMI signal')
@@ -54,12 +55,15 @@ def capture_frames(config, metadata, stopped=lambda: False):
             if not ok or image is None or image.size == 0:
                 time.sleep(0.01)
                 continue
-            if image.dtype != np.uint8 or image.shape != (*parameters.shape, 3):
+            if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3 or (strict and image.shape != (*parameters.shape, 3)):
                 raise ValueError(f'capture must return native {width}x{height} uint8 BGR')
             valid += 1
             if valid <= 5:
                 continue
-            metadata.update(shape=list(image.shape), dtype=str(image.dtype),
+            metadata.update(actual=dict(width=image.shape[1], height=image.shape[0], channels=3),
+                            sampling=dict(frames_read=valid, elapsed_seconds=time.monotonic()-sampling_start,
+                                          scope='software reads including warmup; not HDMI timestamps'),
+                            shape=list(image.shape), dtype=str(image.dtype),
                             strides=list(image.strides), warmup_frames=5,
                             orientation_applied=False, read_monotonic_ns=time.monotonic_ns())
             yield image
@@ -67,9 +71,9 @@ def capture_frames(config, metadata, stopped=lambda: False):
         camera.release()
 
 
-def capture_one(config, metadata):
+def capture_one(config, metadata, strict=True):
     """Read one warmed-up frame and always close the continuous generator."""
-    frames = capture_frames(config, metadata)
+    frames = capture_frames(config, metadata, strict=strict)
     try:
         return next(frames)
     finally:

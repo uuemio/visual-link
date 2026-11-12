@@ -20,6 +20,7 @@ def main():
     p.add_argument('--captured',action='store_true',help='input uses capture ROI, rather than source ROI')
     p.add_argument('--reference',type=Path,help='source image for compare only')
     p.add_argument('--seconds',type=float,default=60,help='single-image display hold time')
+    p.add_argument('--refresh-hz',type=float,help='display refresh rate for apply-mode (Hz)')
     p.add_argument('--queue-size',type=int,default=2,help='bounded stream queue capacity (1-16)')
     a=p.parse_args()
     try:

@@ -1,4 +1,5 @@
 """Selected-device observations and short, explicitly scoped performance probes."""
+from contextlib import contextmanager
 import time
 
 from .core.protocol import encode_frame, decode
@@ -57,3 +58,71 @@ def codec_timings(parameters=DEFAULT_IMAGE):
     if frame.data != b'visual-link performance probe':
         raise ValueError('local codec probe failed')
     return [round((encoded-started)*1000,3),round((ended-encoded)*1000,3)]
+
+
+def device_capabilities(config):
+    """Declared modes and current driver outputs, independently of configured geometry."""
+    if config['backend'] == 'windows':
+        from .backends.windows import display_capabilities
+        from .backends.directshow import capabilities
+        display = display_capabilities(config)
+        capture = capabilities(config['device'])
+    elif config['backend'] == 'linux':
+        from .backends.linux_modes import capabilities as display_capabilities
+        from .backends.v4l2 import capabilities
+        display = display_capabilities(config)
+        capture = capabilities(config['device'], config['timeout'])
+    else:
+        raise ValueError('device discovery requires a hardware backend')
+    for row in capture['declared']:
+        row['native_format'] = row['format']
+        if row['format'] == 'MEDIASUBTYPE_RGB24':
+            row['format'] = 'BGR3'
+        rates = row.get('fps', [])
+        row['fps'] = rates if isinstance(rates, list) else ([] if rates is None else [rates])
+        if row['fps']:
+            row.setdefault('fps_min', min(row['fps']))
+            row.setdefault('fps_max', max(row['fps']))
+    return dict(schema=1, display=display, capture=capture,
+                observed_monotonic_ns=time.monotonic_ns())
+
+
+@contextmanager
+def apply_display_mode(config, refresh_hz=None):
+    """Apply config's tx geometry for this scope and restore on every exit path."""
+    import math
+    if refresh_hz is not None and (type(refresh_hz) not in (int, float)
+                                   or not math.isfinite(refresh_hz) or refresh_hz <= 0):
+        raise ValueError('refresh_hz must be finite and positive')
+    parameters = image_parameters(config, 'tx')
+    if config['backend'] == 'windows':
+        from .backends.windows import apply_mode as apply
+    elif config['backend'] == 'linux':
+        from .backends.linux_modes import apply
+    else:
+        raise ValueError('mode application requires a hardware backend')
+    with apply(config, parameters.width, parameters.height, refresh_hz) as report:
+        yield report
+
+
+def refresh_capture(config, directory, require_match=True):
+    """Reopen after signal change, preserve probe, return actual rx config and pixels.
+
+    The previous capture generator/worker must be closed before calling. A negotiated
+    candidate must require_match; diagnostic callers may inspect a different actual mode.
+    """
+    import json
+    from .hardware import capture, save_json
+    from .core.image import ImageParameters
+    requested = image_parameters(config, 'rx')
+    image = capture(config, directory, strict=False)
+    metadata = json.loads((directory/'device.json').read_text(encoding='utf-8'))
+    actual_mode = dict(width=image.shape[1], height=image.shape[0])
+    probe = dict(capture=metadata, requested=dict(width=requested.width, height=requested.height),
+                 actual=actual_mode, matches=image.shape[:2] == requested.shape)
+    save_json(directory/'probe.json', probe)
+    actual = ImageParameters(**actual_mode)
+    updated = dict(config, rx_mode=actual_mode)
+    if require_match and actual != requested:
+        raise ValueError('actual capture differs from candidate; see probe.json')
+    return updated, image, probe

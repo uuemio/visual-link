@@ -7,15 +7,17 @@ from .core.mapping import read_image
 from .core.image import image_parameters
 from .hardware import capture, receive_one, save_json
 
-MODES = ('pattern', 'compare', 'display', 'capture', 'rx-one', 'display-stream', 'rx-stream', 'bootstrap', 'connect')
+MODES = ('pattern', 'compare', 'display', 'capture', 'rx-one', 'display-stream', 'rx-stream', 'bootstrap', 'connect', 'capabilities', 'apply-mode', 'capture-mode')
 
 
 def run(args, config):
+    if args.refresh_hz is not None and args.mode != 'apply-mode':
+        raise ValueError('--refresh-hz applies only to apply-mode')
     if args.captured or args.size is not None:
         raise ValueError('--captured/--size apply only to offline TX/RX')
     if args.mode != 'pattern' and args.seed is not None:
         raise ValueError('--seed is allowed only for TX or pattern generation')
-    if args.mode in ('capture', 'rx-one', 'rx-stream', 'pattern', 'bootstrap') and args.input is not None:
+    if args.mode in ('capture', 'rx-one', 'rx-stream', 'pattern', 'bootstrap', 'capture-mode', 'capabilities') and args.input is not None:
         raise ValueError('capture/RX/pattern do not accept --input')
     if args.mode in ('compare', 'display', 'display-stream') and args.input is None:
         raise ValueError('display/compare require --input image')
@@ -35,7 +37,28 @@ def run(args, config):
     args.output.mkdir(parents=True, exist_ok=False)
     save_json(args.output/'config.json', config)
     try:
-        if args.mode in ('bootstrap', 'connect'):
+        if args.mode == 'capabilities':
+            from .discovery import device_capabilities
+            report = dict(status='complete', **device_capabilities(config))
+            save_json(args.output/'probe.json', report)
+        elif args.mode == 'apply-mode':
+            from .discovery import apply_display_mode
+            if config['backend'] == 'windows':
+                from .backends.windows import display_one
+            else:
+                from .backends.linux import display_one
+            image = (read_image(args.input) if args.input else
+                     calibration.pattern(20261109, image_parameters(config, 'tx')))
+            with apply_display_mode(config, args.refresh_hz) as applied:
+                save_json(args.output/'mode.json', applied)
+                display = display_one(config, image, args.seconds,
+                                      ready=lambda value: save_json(args.output/'ready.json', value))
+            report = dict(status='complete', mode=applied, display=display, original_mode_restored=True)
+        elif args.mode == 'capture-mode':
+            from .discovery import refresh_capture
+            updated, image, probe = refresh_capture(config, args.output)
+            report = dict(status='captured', rx_mode=updated['rx_mode'], **probe)
+        elif args.mode in ('bootstrap', 'connect'):
             from .bootstrap import exchange
             return exchange(config, args.output, args.seconds, calibrate=args.mode == 'connect',
                             negotiate=args.mode == 'connect', input_file=args.input)

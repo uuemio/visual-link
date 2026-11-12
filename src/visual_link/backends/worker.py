@@ -12,7 +12,7 @@ def main():
     config = json.loads((directory/'config.json').read_text())
     metadata = {}
     try:
-        image = capture_one(config, metadata)
+        image = capture_one(config, metadata, strict='--observe' not in sys.argv[2:])
         write(directory/'capture.png', image)
         metadata['status'] = 'captured'
     except Exception as exc:

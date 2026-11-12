@@ -16,11 +16,11 @@ def save_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2), encoding='utf-8')
 
 
-def capture(config, directory):
+def capture(config, directory, strict=True):
     """Bound all OpenCV open/read calls by killing and reaping their worker."""
     save_json(directory/'config.json', config)
     try:
-        result = subprocess.run([sys.executable, '-m', 'visual_link.backends.worker', str(directory.resolve())],
+        result = subprocess.run([sys.executable, '-m', 'visual_link.backends.worker', str(directory.resolve()), *([] if strict else ['--observe'])],
                                 capture_output=True, timeout=config['timeout'])
     except subprocess.TimeoutExpired as exc:
         save_json(directory/'device.json', dict(status='timeout', expected=None, received=0, missing=None,
